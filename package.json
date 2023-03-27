@@ -1,6 +1,6 @@
 {
   "name": "ez-whatsapp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Baileys API wrapper for easier usage",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
