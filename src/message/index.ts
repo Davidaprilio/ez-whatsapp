@@ -1,4 +1,4 @@
-import { AnyRegularMessageContent, proto } from "@adiwajshing/baileys";
+import { AnyMessageContent, proto } from "../../baileys/lib";
 import Whatsapp from "../Whatsapp";
 import MessageButton from "./button";
 import MessageContact from "./contact";
@@ -14,7 +14,7 @@ export default class Message {
 	private msTimeTyping: number;
 	private toPhones: string[];
 	private skeletonPayloads: any[] = [];
-	private payloads: AnyRegularMessageContent[] = []
+	private payloads: AnyMessageContent[] = []
 
 	constructor(client: Whatsapp, msTimeTyping: number = 10) {
 		this.client = client

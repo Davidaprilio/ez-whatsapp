@@ -1,4 +1,4 @@
-import { proto } from "@adiwajshing/baileys";
+import { proto } from "../../baileys/lib";
 import { convertToJID } from "../helper";
 // import { OptionSection } from "./message/list";
 import Whatsapp, { Client } from "../Whatsapp";
