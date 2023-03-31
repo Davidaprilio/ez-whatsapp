@@ -926,9 +926,8 @@ export default class Whatsapp {
 
     async verifyCodeOTP(code: string|number) {
         try {
-            const response = await this.sock?.register(code.toString().trim().toLowerCase())
-            console.log('Successfully registered your phone number.')
-            console.log(response)
+            const response = await this.sock!.register(code.toString().trim().toLowerCase())
+            console.log('Successfully registered your phone number.', response)
             return true
         } catch(error) {
             console.error('Failed to register your phone number. Please try again.\n', error)

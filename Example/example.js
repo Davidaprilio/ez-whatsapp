@@ -1,9 +1,8 @@
 const readline = require('readline');
-
 const Whatsapp = require('../lib/Whatsapp').default;
 
-
 // Kode untuk registrasi
+/**
 (async () => {
     const wa = new Whatsapp('david-14')
 
@@ -26,7 +25,7 @@ const Whatsapp = require('../lib/Whatsapp').default;
         msg.send(message[0].key.remoteJid)
     })
 })();
-
+ */
 
 // Demo
 (async () => {
