@@ -1,7 +1,6 @@
 import { Boom } from "@hapi/boom";
 import fs from "fs";
 import { writeFile } from 'fs/promises'
-import { randomUUID } from "crypto";
 import PinoLog from "./logger/pino";
 import mime from "mime-types";
 
@@ -18,14 +17,13 @@ import makeWASocket, {
     MessageUpsertType,
     proto,
     isJidGroup,
-    PresenceData,
     WASocket,
-    downloadMediaMessage
+    downloadMediaMessage,
 } from "@adiwajshing/baileys";
+declare type MakeInMemoryStore = ReturnType<typeof makeInMemoryStore>;
 
-import { convertToJID, log, jidToNumberPhone } from "./helper";
+import { convertToJID, jidToNumberPhone } from "./helper";
 
-import event from "./event";
 import Message from "./message/index";
 import { Logger } from "pino";
 
@@ -50,13 +48,6 @@ type MessageUpsert = {
     type: MessageUpsertType
 }
 
-type PresenceUpdate = { 
-    id: string, 
-    presences: { 
-        [participant: string]: PresenceData
-    } 
-}
-
 interface CallableFunctions {
     onStoped: Function,
     onDisconnected: Function,
@@ -70,10 +61,13 @@ interface CallableFunctions {
 }
 
 interface WhatsappOption {
+    // useMobile: boolean,
+    useStore: boolean,
     browser: string | Client | [string,string,string],
-    storeSession: boolean,
-    showQRcode: boolean,
-    silentLog: boolean
+    showQRinTerminal: boolean,
+    hostname: string | null,
+    silentLog: boolean,
+    pathSession: string
 }
 
 interface ClientInfo {
@@ -94,15 +88,12 @@ interface ClientInfo {
 
 export default class Whatsapp {
     info: ClientInfo;
-    sock: WASocket; // Socket dari makeWALegacySocket | makeWASocket
-
-    // private queueMessage: [];
+    private _sock: WASocket; // Socket dari makeWALegacySocket | makeWASocket
     private status: string;
     private saveState: any;
     private connectionLostCount: number = 0; // jumlah koneksi timeout 
-    private store: any;
+    private store: MakeInMemoryStore | undefined;
     private logger: Logger;
-    private silentLogging: boolean;
     private isStopedByUser: boolean = false;
     private attemptQRcode: number = 0;
     private callableFunctions: CallableFunctions = {
@@ -116,44 +107,42 @@ export default class Whatsapp {
         onReactionMessage: () => {},
         onStopedSession: () => {},
     }
-    private options = {
-        showQRCode: false
+    private options: WhatsappOption = {
+        hostname: null,
+        showQRinTerminal: true,
+        browser: Client.Chrome,
+        silentLog: true,
+        useStore: false,
+        // useMobile: false,
+        pathSession: '.session',
     };
 
+    get sock() {
+        return this._sock
+    }
+
     constructor(
-        client_id?: string | null, 
-        hostname: string | null = null,
+        sessionId?: string | null,
         moreOptions?: Partial<WhatsappOption>
     ) {
-        const defaultOptions: WhatsappOption = {
-            browser: Client.Chrome,
-            showQRcode: false,
-            silentLog: true,
-            storeSession: true,
-        } 
-        const options: WhatsappOption = { ...defaultOptions, ...moreOptions }
+        this.options = { ...this.options, ...moreOptions }
+        sessionId = sessionId || "ez-wa";
+        const pathSession = `${this.options.pathSession}/auth-state/${sessionId}`;
 
-        this.options.showQRCode = options.showQRcode
-        this.silentLogging = options.silentLog;
-        if (client_id === null || client_id === undefined) {
-            client_id = "wac-" + randomUUID();
-        }
-        const pathAuth = `.session/auth-state/${client_id}`;
-
-        const browserSocket = Array.isArray(options.browser) ? options.browser : Browsers.appropriate(options.browser);
+        const browserSocket = Array.isArray(this.options.browser) ? this.options.browser : Browsers.appropriate(this.options.browser);
         // create name host
-        if (hostname) {
+        if (this.options.hostname) {
             if (browserSocket[1] in Client) {
-                browserSocket[0] = hostname
+                browserSocket[0] = this.options.hostname
             } else {
-                browserSocket[0] = `${browserSocket[1]}(${hostname})`
+                browserSocket[0] = `${browserSocket[1]}(${this.options.hostname})`
             }
         }
 
         this.info = {
-            id: client_id,
-            hostname,
-            authPath: pathAuth,
+            id: sessionId,
+            hostname: this.options.hostname,
+            authPath: pathSession,
             ppURL: null,
             pushName: null,
             phoneNumber: null,
@@ -167,64 +156,58 @@ export default class Whatsapp {
 
         // make Logger
         this.logger = PinoLog.child({});
-        this.logger.level = this.silentLogging ? "silent" : "debug";
+        this.logger.level = this.options.silentLog ? "silent" : "debug";  
 
-        if (options.storeSession) {
+        if (this.options.useStore) {
             // buat path untuk simpan auth session
-            if (!fs.existsSync(pathAuth)) fs.mkdirSync(pathAuth, { recursive: true });
+            if (!fs.existsSync(pathSession)) fs.mkdirSync(pathSession, { recursive: true });
 
-            // this.setStatusDeviceDeactive();
             // untuk menyimpan data socket, session, chat dll
             this.store = makeInMemoryStore({
                 logger: this.logger,
             });
+            this.store.readFromFile(pathSession + '/ezwa_store.json')
+            // save every 10s
+            // setInterval(() => {
+            //     this.store.writeToFile('./baileys_store_multi.json')
+            // }, 10_000)
         }
     }
 
-    startSock = async (skipStopState = false) => {
-        if (skipStopState) {
-            this.isStopedByUser = false;
-        }
-
+    startSock = async () => {
         if (this.status == "active") {
             console.log(`Client ${this.info.id} already connected`);
             return this.sock;
         }
 
         // buat sock dari client yang diberikan
-        await this.createSock(this.info.browser);
+        await this.createSock();
 
-        this.store.bind(this.sock.ev);
+        this.store?.bind(this.sock.ev);
+        this.createEvenListener()
+        return this.sock;
+    };
 
-        /* ---Set Event If Already Connect--- */
-
-        // Pesan masuk
+    private createEvenListener() {
+		// Pesan masuk
         this.sock.ev.on("messages.upsert", async ({ messages, type }: MessageUpsert) => {
             // notify => notify the user, this message was just received
             // append => append the message to the chat history, no notification required
             if (type === "append" || type === "notify") {
                 messages.forEach(msg => {
-                    const { pushName, messageTimestamp, key, message } = msg;
-                    const { id: messageID, remoteJid: jid } = key
-                    const phone = jidToNumberPhone(jid || '');
+                    const { key } = msg;
                     
-                    if (key.fromMe) {
-                        event.emit("message.out", this.info.id, {
-                            messageID,
-                            timestamp: messageTimestamp,
-                        });
-                    } else {
+                    if (key.fromMe = false) {
+                        const { id: messageID, remoteJid: jid } = key
+                        const phone = jidToNumberPhone(jid || '');
                         const isGroup = isJidGroup(jid || undefined) || false;
-                        this.incomingMessage(msg, isGroup, key.fromMe || false, jid || null, messageID || null)
-                        // Incomming Messages
-                        event.emit("message.in", this.info.id, {
+                        
+                        this.incomingMessage(msg, {
+                            isGroup,
+                            phoneNumber: phone,
                             messageID,
                             jid,
-                            pushName,
-                            phone,
-                            text: message?.conversation,
-                            timestamp: messageTimestamp,
-                        });
+                        })
                     }
                 })
             } else {
@@ -234,14 +217,11 @@ export default class Whatsapp {
 
         // Perubahan Pesan
         this.sock.ev.on("messages.update", (m: any) => {
-            log("===============  messages.update  ================");
-            log(JSON.stringify(m, undefined, 2));
+            console.log("===============  messages.update  ================");
+            console.log(JSON.stringify(m, undefined, 2));
         });
 
         // State Update Online|Offline
-        this.sock.ev.on("presence.update", (presence: PresenceUpdate) => this.presenceUpdated(presence));
-        // this.sock.ev.on("chats.update", (m: any) => log(m));
-        // this.sock.ev.on("contacts.update", (m: any) => log(m));
 
         this.sock.ev.on("connection.update", (update: any) => {
             this.connectionUpdate(update);
@@ -251,28 +231,19 @@ export default class Whatsapp {
         this.sock.ev.on("creds.update", this.saveState);
 
         this.sock.ev.on("messages.reaction", (arg: { key: proto.IMessageKey; reaction: proto.IReaction; }[]) => {
-            log("Reaction", arg)
+            console.log("Reaction", arg)
             this.emitCallback(
                 this.callableFunctions.onReactionMessage,
 
             )
         });
+	}
 
-        // setInterval(() => {
-        //   this.store.writeToFile(this.info.store);
-        // }, 10_000);
-
-        return this.sock;
-    };
-
-    incomingMessage(message: proto.IWebMessageInfo, isGroup: boolean, isFromMe: boolean, jid: string|null, messageID: string|null) {
+    incomingMessage(message: proto.IWebMessageInfo, messageData: object) {
         this.emitCallback(
             this.callableFunctions.onIncomingMessage,
             message,
-            isGroup,
-            isFromMe,
-            jid,
-            messageID
+            messageData
         )        
     }
 
@@ -288,10 +259,7 @@ export default class Whatsapp {
      * @param multiDevice: Mode Client Legacy|MultiDevice(default)
      * @returns Object
      */
-    async createSock(
-        browser: [string, string, string],
-        showQRcode: boolean = true,
-    ) {
+    private async createSock() {
         const { version, isLatest } = await fetchLatestBaileysVersion();
         console.log(`====================== Whatsapp API ======================`);
         console.log(` Using WA v${version.join(".")} | isLatest: ${isLatest} | cid: ${this.info.id}`);
@@ -305,12 +273,12 @@ export default class Whatsapp {
             const conn = makeWASocket({
                 version,
                 logger: this.logger,
-                browser,
-                printQRInTerminal: showQRcode,
+                browser: this.info.browser,
+                printQRInTerminal: this.options.showQRinTerminal,
                 auth: state,
-                syncFullHistory: true
+                syncFullHistory: true,
             })
-            this.sock = conn;
+            this._sock = conn;
         } catch (error) {
             console.log("Socket Error:", error);
         }
@@ -321,7 +289,7 @@ export default class Whatsapp {
      * Handle Connection Update
      *
      */
-    private async connectionUpdate(update: ConnectionState): Promise<void> {
+    private connectionUpdate(update: ConnectionState) {
         const { 
             connection, 
             lastDisconnect, 
@@ -346,12 +314,14 @@ export default class Whatsapp {
                 if (err.statusCode === 410 || err?.payload.message === "Stream Errored") {
                     console.log("Stream Errored", err.payload);
                     try {
-                        await this.stopSock();
+                        this.stopSock();
                     } catch (error) {
                         console.log("Stoped sock", error);
                     }
                     setTimeout(() => {
-                        this.startSock(true);
+                        if (!this.isStopedByUser) {
+                            this.startSock();
+                        }
                     }, 10_000);
                     return;
                 }
@@ -408,15 +378,10 @@ export default class Whatsapp {
             }
 
             if (connection === 'connecting') {
-                this.socketConnecting()
+                this.status = connection
+                this.info.status = connection
             }
-            event.emit("device.connection.update", this.info.id, {
-                status: this.info.status,
-                isAuth: this.info.isAuth,
-                info: this.info.status === "connected" ? this.info : null,
-            });
         }
-        // log("connection update: END");
     }
 
 
@@ -437,16 +402,11 @@ export default class Whatsapp {
         if (this.info.jid !== null) {
             this.info.phoneNumber = jidToNumberPhone(this.info.jid);
         }
-
-        event.emit('connection.connected', this.info)
-
-        const infoSocket = this.getInfoSocket()
-
-        this.emitCallback(this.callableFunctions.onConnected, infoSocket)
+        this.emitCallback(this.callableFunctions.onConnected, this.info)
     }
 
     private socketScanQR(codeQR: string) {
-        log("QR Code Update");
+        console.log("QR Code Update");
         if (this.attemptQRcode > 5) {
             console.log("Stoped Device because 5x not scanning QRcode (not used)");
             this.stopSock();
@@ -461,20 +421,11 @@ export default class Whatsapp {
         const data = {
             qrCode: codeQR,
         }
-        event.emit("device.qrcode.update", this.info.id, data);
         this.emitCallback(this.callableFunctions.onScanQR, data)
     }
 
-    private socketConnecting() {
-        const reasonInfo = {
-            reason: 'soket rusak'
-        }
-
-        event.emit('connection.connecting', reasonInfo)
-    }
-
     private socketLogout() {
-        log("Client Is Logout");
+        console.log("Client Is Logout");
         this.info.isAuth = false;
         this.info.status = "disconnected";
         this.setStatusDeviceDeactive();
@@ -482,12 +433,7 @@ export default class Whatsapp {
         const reasonInfo = {
             reason: 'Logout',
         }
-        event.emit('connection.disconnected', reasonInfo)
         this.emitCallback(this.callableFunctions.onDisconnected, reasonInfo)
-    }
-
-    private presenceUpdated(presence: PresenceUpdate) {
-        event.emit('presence.update', presence)
     }
     // END: Event Handler
 
@@ -495,11 +441,18 @@ export default class Whatsapp {
     /**
      * Only stop socket connection (safe socket credential)
      */
-    async stopSock() {
+    stopSock() {
         this.isStopedByUser = true; // Set StopByUser true agar tidak di Reconnect oleh connectionUpdate()
-        await this.sock.ws.terminate();
+        this.sock.ws.terminate();
         // await this.sock.ws.close();
         this.setStatusDeviceDeactive();
+    }
+
+
+    async login() {
+        this.info.status = 'connecting';
+        this.isStopedByUser = false;
+        return await this.startSock()
     }
 
     async logout() {
@@ -567,21 +520,13 @@ export default class Whatsapp {
     }
     // END: Register Callable Event Function
 
-    // dummy
-    private getInfoSocket() {
-        const infoSocket: object = {
-            name: 'david',
-            phone: '629361836372',
-        }
-        return infoSocket
-    }
-
     sendMessageWithTyping = async (
         jid: string,
         msg: AnyMessageContent,
         replayMsg?: proto.IWebMessageInfo,
         msTimeTyping?: number
     ) => {
+        this.isRegistWA(jid)
         await this.sock.presenceSubscribe(jid);
         await delay(100);
 
@@ -591,11 +536,9 @@ export default class Whatsapp {
         await this.sock.sendPresenceUpdate("paused", jid);
         const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
         try {
-            console.log(quotedMsg);
             return await this.sock.sendMessage(jid, msg, quotedMsg);
         } catch (error) {
             const err = (error as Boom)?.output;
-            console.error("Send message", error, err?.payload ?? err);
             return {
                 status: false,
                 error: true,
@@ -608,11 +551,13 @@ export default class Whatsapp {
 
     /**
      * Checking Phone Number is Registration on Whatsapp
+     * @return JID string or false
+     *  
      */
-    async isRegistWA(numberPhone: string): Promise<boolean> {
-        const phone = convertToJID(numberPhone);
-        let res = await this.sock.onWhatsApp(phone);
-        return res[0]?.exists ?? false;
+    async isRegistWA(numberPhone: string): Promise<string|boolean> {
+        const jid = convertToJID(numberPhone);
+        let res = await this.sock.onWhatsApp(jid);
+        return res[0]?.exists ? jid : false;
     }
 
     async statusContact(jid: string) {
@@ -677,7 +622,6 @@ export default class Whatsapp {
     async getProfilePicture(highResolution = false): Promise<string|null> {
         if (this.info.jid) {
             this.info.ppURL = await this.fetchProfilePicture(this.info.jid, highResolution) || null;
-            event.emit('info.profile.photo', this.info.id, this.info.ppURL)
             return this.info.ppURL;
         }
         return null;

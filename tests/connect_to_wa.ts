@@ -1,5 +1,5 @@
-import Whatsapp, { Client } from "../Whatsapp";
-const wa: Whatsapp = new Whatsapp('david-14A', null, {
+import Whatsapp, { Client } from "../src/Whatsapp";
+const wa: Whatsapp = new Whatsapp('david-14A', {
     browser: Client.Opera
 });
 

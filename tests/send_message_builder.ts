@@ -1,9 +1,9 @@
 import { proto } from "@adiwajshing/baileys";
-import { convertToJID } from "../helper";
+import { convertToJID } from "../src/helper";
 // import { OptionSection } from "./message/list";
-import Whatsapp, { Client } from "../Whatsapp";
+import Whatsapp, { Client } from "../src/Whatsapp";
 
-const wa: Whatsapp = new Whatsapp('david-14A', null, {
+const wa: Whatsapp = new Whatsapp('david-14A', {
     browser: Client.Opera
 });
 
