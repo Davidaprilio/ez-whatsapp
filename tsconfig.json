@@ -1,6 +1,6 @@
 {
   "compilerOptions": {
-    "target": "es2016",
+    "target": "es2018",
     "removeComments": true,
     "module": "commonjs",
     "moduleResolution": "node",

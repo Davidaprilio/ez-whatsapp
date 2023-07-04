@@ -12,7 +12,7 @@ export type NullableString = string | null
 export default class Message {
 	private client: Whatsapp;
 	private msTimeTyping: number;
-	private toPhones: string[];
+	private toPhones: string[] = [];
 	private skeletonPayloads: any[] = [];
 	private payloads: AnyRegularMessageContent[] = []
 
@@ -172,35 +172,43 @@ export default class Message {
 		this.sendMessageExec(message.key.remoteJid, message)
 	}
 
-	send(jid?: string) {
+	/**
+	 * Execute Sending Message
+	 * 
+	 * @param jidOrNumberPhone jid wa or phone number with country code
+	 */
+	async send(jidOrNumberPhone?: string) {
 		this.buildPayload()
 		this.skeletonPayloads = []
-		if (jid) {
-			this.sendMessageExec(jid)
+		if (jidOrNumberPhone) {
+			await this.sendMessageExec(jidOrNumberPhone)
 		} else {
-			this.toPhones.map((jid) => {
-				this.sendMessageExec(jid)
-			})
+			for (const phone of this.toPhones) {
+				await this.sendMessageExec(phone)
+			}
 		}
 	}
 
 	/**
 	 * Execute Sending Message
+	 * the more payload and phone, the longer the sending process
 	 * @param jid jid wa or phone
 	 * @returns response from wa
 	 */
-	private sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
+	private async sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
 		console.log('sendTo:', jid);
+		const res = [];
 
-		const res = this.payloads.map(async (payload) => {
-			const res = await this.client.sendMessageWithTyping(
+		for (const payload of this.payloads) {
+			const resClient = await this.client.sendMessageWithTyping(
 				jid, 
 				payload, 
 				replyMessage, 
 				this.msTimeTyping)
-			console.log('RES WA', res);
-			return res
-		})
+			console.log('RES WA', resClient);
+
+			res.push(resClient)
+		}
 		return res
 	}
 }

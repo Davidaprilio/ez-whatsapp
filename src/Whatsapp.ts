@@ -57,7 +57,8 @@ interface WhatsappOption {
     showQRinTerminal: boolean,
     hostname: string | null,
     silentLog: boolean,
-    pathSession: string
+    pathSession: string,
+    maxQrScanAttempts: number,
 }
 
 export interface ClientInfo {
@@ -93,6 +94,7 @@ export default class Whatsapp implements EzWaEventEmitter {
         silentLog: true,
         useStore: false,
         // useMobile: false,
+        maxQrScanAttempts: 5,
         pathSession: '.session',
     };
     event: EventEmitter;
@@ -390,7 +392,7 @@ export default class Whatsapp implements EzWaEventEmitter {
 
     private async socketScanQR(codeQR: string) {
         console.log("QR Code Update");
-        if (this.attemptQRcode > 5) {
+        if (this.attemptQRcode > this.options.maxQrScanAttempts) {
             console.log("Stoped Device because 5x not scanning QRcode (not used)");
             await this.stopSock();
             this.emit('qr.stoped', {
@@ -471,23 +473,37 @@ export default class Whatsapp implements EzWaEventEmitter {
         this.info.phoneNumber = null;
     }
 
+    /**
+     * 
+     * @param jid jid or phone number
+     * @returns 
+     */
     sendMessageWithTyping = async (
-        jid: string,
+        jidOrPhone: string,
         msg: AnyMessageContent,
         replayMsg?: proto.IWebMessageInfo,
         msTimeTyping?: number
     ) => {
-        this.isRegistWA(jid)
-        await this.sock.presenceSubscribe(jid);
+        const jidRegistered = await this.isRegistWA(jidOrPhone)
+        if (jidRegistered === false) {
+            return {
+                status: false,
+                error: true,
+                message: "phone number is not registered",
+                response: null,
+                err: 'phone.not_registered'
+            }
+        }
+        await this.sock.presenceSubscribe(jidRegistered);
         await delay(100);
 
-        await this.sock.sendPresenceUpdate("composing", jid);
+        await this.sock.sendPresenceUpdate("composing", jidRegistered);
         await delay(msTimeTyping ?? 250); //ms
 
-        await this.sock.sendPresenceUpdate("paused", jid);
+        await this.sock.sendPresenceUpdate("paused", jidRegistered);
         const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
         try {
-            return await this.sock.sendMessage(jid, msg, quotedMsg);
+            return await this.sock.sendMessage(jidRegistered, msg, quotedMsg);
         } catch (error) {
             const err = (error as Boom)?.output;
             return {
@@ -505,7 +521,7 @@ export default class Whatsapp implements EzWaEventEmitter {
      * @return JID string or false
      *  
      */
-    async isRegistWA(numberPhone: string): Promise<string|boolean> {
+    async isRegistWA(numberPhone: string): Promise<string|false> {
         const jid = convertToJID(numberPhone);
         let res = await this.sock.onWhatsApp(jid);
         return res[0]?.exists ? jid : false;
