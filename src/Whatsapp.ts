@@ -19,13 +19,15 @@ import makeWASocket, {
     isJidGroup,
     WASocket,
     downloadMediaMessage,
-} from "@adiwajshing/baileys";
+} from "@whiskeysockets/baileys";
 declare type MakeInMemoryStore = ReturnType<typeof makeInMemoryStore>;
 
-import { convertToJID, jidToNumberPhone } from "./helper";
+import { convertToJID, jidToNumberPhone, makeQrImage } from "./helper";
 
 import Message from "./message/index";
 import { Logger } from "pino";
+import { EventEmitter } from "events";
+import { EzWaEventEmitter, EzWaEventMap } from "./event";
 
 export enum Client {
     Chrome = 'Chrome',
@@ -48,18 +50,6 @@ type MessageUpsert = {
     type: MessageUpsertType
 }
 
-interface CallableFunctions {
-    onStoped: Function,
-    onDisconnected: Function,
-    onConnecting: Function,
-    onScanQR: Function,
-    onConnected: Function,
-    onIncomingMessage: Function,
-    onClickButtonMessage: Function,
-    onReactionMessage: Function,
-    onStopedSession: Function,
-}
-
 interface WhatsappOption {
     // useMobile: boolean,
     useStore: boolean,
@@ -70,7 +60,7 @@ interface WhatsappOption {
     pathSession: string
 }
 
-interface ClientInfo {
+export interface ClientInfo {
     id: string;
     hostname: string | null;
     authPath: string;
@@ -86,7 +76,7 @@ interface ClientInfo {
     more?: any;
 }
 
-export default class Whatsapp {
+export default class Whatsapp implements EzWaEventEmitter {
     info: ClientInfo;
     private _sock: WASocket; // Socket dari makeWALegacySocket | makeWASocket
     private status: string;
@@ -96,17 +86,6 @@ export default class Whatsapp {
     private logger: Logger;
     private isStopedByUser: boolean = false;
     private attemptQRcode: number = 0;
-    private callableFunctions: CallableFunctions = {
-        onConnected: () => {},
-        onDisconnected: () => {},
-        onConnecting: () => {},
-        onStoped: () => {},
-        onScanQR: () => {},
-        onIncomingMessage: () => {},
-        onClickButtonMessage: () => {},
-        onReactionMessage: () => {},
-        onStopedSession: () => {},
-    }
     private options: WhatsappOption = {
         hostname: null,
         showQRinTerminal: true,
@@ -116,8 +95,9 @@ export default class Whatsapp {
         // useMobile: false,
         pathSession: '.session',
     };
+    event: EventEmitter;
 
-    get sock() {
+    get sock(): WASocket {
         return this._sock
     }
 
@@ -172,9 +152,11 @@ export default class Whatsapp {
             //     this.store.writeToFile('./baileys_store_multi.json')
             // }, 10_000)
         }
+
+        this.event = new EventEmitter();
     }
 
-    startSock = async () => {
+    startSock = async ():Promise<WASocket> => {
         if (this.status == "active") {
             console.log(`Client ${this.info.id} already connected`);
             return this.sock;
@@ -232,19 +214,15 @@ export default class Whatsapp {
 
         this.sock.ev.on("messages.reaction", (arg: { key: proto.IMessageKey; reaction: proto.IReaction; }[]) => {
             console.log("Reaction", arg)
-            this.emitCallback(
-                this.callableFunctions.onReactionMessage,
-
-            )
+            this.emit('msg.reaction', {})
         });
 	}
 
-    incomingMessage(message: proto.IWebMessageInfo, messageData: object) {
-        this.emitCallback(
-            this.callableFunctions.onIncomingMessage,
+    incomingMessage(message: proto.IWebMessageInfo, messageData: any) {
+        this.emit('msg.incoming', {
             message,
             messageData
-        )        
+        })       
     }
 
     /**
@@ -303,7 +281,9 @@ export default class Whatsapp {
         if (this.isStopedByUser) {
             this.logger.info(`Device ${this.info.id} Stoped by user (Safe Session)`);
             this.info.status = "stoped";
-            this.emitCallback(this.callableFunctions.onStopedSession)
+            this.emit('sock.stopped', {
+                reason: "stoped_by_user",
+            })
         }
         // Reconnect jika connection close (bukan dari user)
         else if (connection === "close") {
@@ -380,6 +360,9 @@ export default class Whatsapp {
             if (connection === 'connecting') {
                 this.status = connection
                 this.info.status = connection
+                this.emit('sock.connecting', {
+
+                })
             }
         }
     }
@@ -402,14 +385,18 @@ export default class Whatsapp {
         if (this.info.jid !== null) {
             this.info.phoneNumber = jidToNumberPhone(this.info.jid);
         }
-        this.emitCallback(this.callableFunctions.onConnected, this.info)
+        this.emit('sock.connected', this.info) 
     }
 
-    private socketScanQR(codeQR: string) {
+    private async socketScanQR(codeQR: string) {
         console.log("QR Code Update");
         if (this.attemptQRcode > 5) {
             console.log("Stoped Device because 5x not scanning QRcode (not used)");
-            this.stopSock();
+            await this.stopSock();
+            this.emit('qr.stoped', {
+                state: 'expired',
+                reason: 'not_scanning',
+            })
             return;
         } else {
             this.attemptQRcode++;
@@ -418,10 +405,12 @@ export default class Whatsapp {
         this.info.isAuth = false;
         this.info.qrCode = codeQR;
         this.info.status = "scan QR";
-        const data = {
+        this.emit('qr.update', {
+            status: 'onscan',
             qrCode: codeQR,
-        }
-        this.emitCallback(this.callableFunctions.onScanQR, data)
+            qrImage: await makeQrImage(codeQR),
+            attempt: this.attemptQRcode,
+        })
     }
 
     private socketLogout() {
@@ -430,10 +419,9 @@ export default class Whatsapp {
         this.info.status = "disconnected";
         this.setStatusDeviceDeactive();
         this.removeSessionPath();
-        const reasonInfo = {
+        this.emit('sock.disconnected', {
             reason: 'Logout',
-        }
-        this.emitCallback(this.callableFunctions.onDisconnected, reasonInfo)
+        })
     }
     // END: Event Handler
 
@@ -441,15 +429,14 @@ export default class Whatsapp {
     /**
      * Only stop socket connection (safe socket credential)
      */
-    stopSock() {
+    async stopSock() {
         this.isStopedByUser = true; // Set StopByUser true agar tidak di Reconnect oleh connectionUpdate()
-        this.sock.ws.terminate();
-        // await this.sock.ws.close();
         this.setStatusDeviceDeactive();
+        await this.sock.ws.close();
     }
 
 
-    async login() {
+    async login():Promise<WASocket> {
         this.info.status = 'connecting';
         this.isStopedByUser = false;
         return await this.startSock()
@@ -483,42 +470,6 @@ export default class Whatsapp {
         this.info.pushName = null;
         this.info.phoneNumber = null;
     }
-
-    // emiter callable function
-    private emitCallback(callback: Function, ...data: any) {
-        return new Promise((resolve, reject) => {
-            try {
-                callback(...data)
-                resolve(true)
-            } catch (error) {
-                reject(error)
-            }
-        })
-    }
-
-    // Register Callable Event Function
-    onConnected(callback: Function) {
-        this.callableFunctions.onConnected = callback
-    }
-    onConnecting(callback: Function) {
-        this.callableFunctions.onConnecting = callback
-    }
-    onDisconnected(callback: Function) {
-        this.callableFunctions.onDisconnected = callback
-    }
-    onIncomingMessage(callback: Function) {
-        this.callableFunctions.onIncomingMessage = callback
-    }
-    onClickButtonMessage(callback: Function) {
-        this.callableFunctions.onClickButtonMessage = callback
-    }
-    onReactionMessage(callback: Function) {
-        this.callableFunctions.onReactionMessage = callback
-    }
-    onStopedSession(callback: Function) {
-        this.callableFunctions.onStopedSession = callback
-    }
-    // END: Register Callable Event Function
 
     sendMessageWithTyping = async (
         jid: string,
@@ -714,6 +665,23 @@ export default class Whatsapp {
 
         await writeFile(path, buffer)
         return path
+    }
+
+    // add event listener
+    on<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.on(event, listener)
+    }
+
+    off<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.off(event, listener)
+    }
+
+    removeAllListeners<T extends keyof EzWaEventMap>(event: T): void {
+        this.event.removeAllListeners(event)
+    }
+
+    emit<T extends keyof EzWaEventMap>(event: T, arg: EzWaEventMap[T]): boolean {
+        return this.event.emit(event, arg)
     }
 }
 

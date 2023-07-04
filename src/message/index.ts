@@ -1,4 +1,4 @@
-import { AnyRegularMessageContent, proto } from "@adiwajshing/baileys";
+import { AnyRegularMessageContent, proto } from "@whiskeysockets/baileys";
 import Whatsapp from "../Whatsapp";
 import MessageButton from "./button";
 import MessageContact from "./contact";

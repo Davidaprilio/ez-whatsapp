@@ -1,4 +1,3 @@
-import { proto } from "@adiwajshing/baileys";
 import { convertToJID } from "../src/helper";
 // import { OptionSection } from "./message/list";
 import Whatsapp, { Client } from "../src/Whatsapp";
@@ -12,7 +11,7 @@ const wa: Whatsapp = new Whatsapp('david-14A', {
     await wa.startSock()
     console.log('Socket Started');
 
-    wa.onConnected((info: any) => {
+    wa.on('sock.connected', (info) => {
         console.log('WES KONEK =======================', info);
 
         setTimeout(async () => {
@@ -69,19 +68,29 @@ const wa: Whatsapp = new Whatsapp('david-14A', {
 			}
         }, 5_000);
     })
-    
-    wa.onDisconnected((reasonInfo: object) => {
+
+    wa.on('sock.disconnected', (reasonInfo: object) => {
         console.log('Koneksi Terputus', reasonInfo);
     })
 
-    wa.onConnecting(() => {
-        console.log('Menyambungkan Ulang');
-    })
-    wa.onStopedSession(() => {
+    wa.on('sock.connecting', () => {
         console.log('Menyambungkan Ulang');
     })
 
-    wa.onIncomingMessage((message: proto.IWebMessageInfo, isFromGroup: boolean, isFromMe: boolean, jid: string|null, messageID: string|null) => {
+    wa.on('qr.stoped', (data) => {
+        if (data.state == 'expired') {
+            console.log('upaya menyambungkan QR habis');
+        } else {
+            console.log('QR code telah berhenti');
+        }
+    })
+
+    wa.on('msg.incoming', (data) => {
+        const message = data.message;
+        const isFromMe = message.key.fromMe;
+        const isFromGroup = message.key.remoteJid?.endsWith('@g.us') || false;
+        const { jid, messageID } = data.messageData
+
         console.log(
             {
                 message, isFromMe, isFromGroup, jid, messageID
@@ -109,6 +118,10 @@ const wa: Whatsapp = new Whatsapp('david-14A', {
                 }
             }
         }
+    })
+
+    wa.on('qr.update', (data) => {
+        console.log('QR Update', data);
     })
 
 })()
