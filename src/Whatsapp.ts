@@ -494,13 +494,14 @@ export default class Whatsapp implements EzWaEventEmitter {
                 err: 'phone.not_registered'
             }
         }
-        await this.sock.presenceSubscribe(jidRegistered);
-        await delay(100);
+        
+        if (msTimeTyping) {
+            await this.sock.presenceSubscribe(jidRegistered);
+            await this.sock.sendPresenceUpdate("composing", jidRegistered);
+            await delay(msTimeTyping); // ms
+            await this.sock.sendPresenceUpdate("paused", jidRegistered);
+        }
 
-        await this.sock.sendPresenceUpdate("composing", jidRegistered);
-        await delay(msTimeTyping ?? 250); //ms
-
-        await this.sock.sendPresenceUpdate("paused", jidRegistered);
         const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
         try {
             return await this.sock.sendMessage(jidRegistered, msg, quotedMsg);

@@ -181,11 +181,13 @@ export default class Message {
 		this.buildPayload()
 		this.skeletonPayloads = []
 		if (jidOrNumberPhone) {
-			await this.sendMessageExec(jidOrNumberPhone)
+			return await this.sendMessageExec(jidOrNumberPhone)
 		} else {
+			const res: any = {}
 			for (const phone of this.toPhones) {
-				await this.sendMessageExec(phone)
+				res[phone] = await this.sendMessageExec(phone)
 			}
+			return res
 		}
 	}
 
