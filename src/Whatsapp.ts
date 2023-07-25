@@ -536,14 +536,13 @@ export default class Whatsapp implements EzWaEventEmitter {
     async fetchProfilePicture(
         jid: string,
         highResolution = false
-    ): Promise<string|undefined> {
-        if (highResolution) {
-            // for high res picture
-            return await this.sock.profilePictureUrl(jid, "image");
-        } else {
-            // for low res picture
-            return await this.sock.profilePictureUrl(jid);
-        }
+    ): Promise<string|null> {
+        // image for high res picture
+        // preview for low res picture
+        return await this.sock.profilePictureUrl(
+            jid, 
+            highResolution ? "image" : "preview"
+        ).catch(() => null) || null
     }
 
     createMessage() {
