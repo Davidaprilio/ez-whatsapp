@@ -84,7 +84,7 @@ export default class Whatsapp implements EzWaEventEmitter {
     private saveState: any;
     private connectionLostCount: number = 0; // jumlah koneksi timeout 
     private store: MakeInMemoryStore | undefined;
-    private logger: Logger;
+    readonly logger: Logger;
     private isStopedByUser: boolean = false;
     private attemptQRcode: number = 0;
     private options: WhatsappOption = {
@@ -160,7 +160,7 @@ export default class Whatsapp implements EzWaEventEmitter {
 
     startSock = async ():Promise<WASocket> => {
         if (this.status == "active") {
-            console.log(`Client ${this.info.id} already connected`);
+            this.logger.info(`Client ${this.info.id} already connected`);
             return this.sock;
         }
 
@@ -175,34 +175,36 @@ export default class Whatsapp implements EzWaEventEmitter {
     private createEvenListener() {
 		// Pesan masuk
         this.sock.ev.on("messages.upsert", async ({ messages, type }: MessageUpsert) => {
+            
             // notify => notify the user, this message was just received
             // append => append the message to the chat history, no notification required
             if (type === "append" || type === "notify") {
-                messages.forEach(msg => {
-                    const { key } = msg;
+                const msg = messages[0];
+                if (msg === undefined) return;
+
+                const { key } = msg;
+                
+                if (key.fromMe = false) {
+                    const { id: messageID, remoteJid: jid } = key
+                    const phone = jidToNumberPhone(jid || '');
+                    const isGroup = isJidGroup(jid || undefined) || false;
                     
-                    if (key.fromMe = false) {
-                        const { id: messageID, remoteJid: jid } = key
-                        const phone = jidToNumberPhone(jid || '');
-                        const isGroup = isJidGroup(jid || undefined) || false;
-                        
-                        this.incomingMessage(msg, {
-                            isGroup,
-                            phoneNumber: phone,
-                            messageID,
-                            jid,
-                        })
-                    }
-                })
+                    this.incomingMessage(msg, {
+                        isGroup,
+                        phoneNumber: phone,
+                        messageID,
+                        jid,
+                    })
+                }
             } else {
-                console.log("Incoming Message unknown Type: ", type, messages);
+                this.logger.info("Incoming Message unknown Type: ", type, messages);
             }
         });
 
         // Perubahan Pesan
         this.sock.ev.on("messages.update", (m: any) => {
-            console.log("===============  messages.update  ================");
-            console.log(JSON.stringify(m, undefined, 2));
+            this.logger.info("===============  messages.update  ================");
+            this.logger.info(JSON.stringify(m, undefined, 2));
         });
 
         // State Update Online|Offline
@@ -215,12 +217,13 @@ export default class Whatsapp implements EzWaEventEmitter {
         this.sock.ev.on("creds.update", this.saveState);
 
         this.sock.ev.on("messages.reaction", (arg: { key: proto.IMessageKey; reaction: proto.IReaction; }[]) => {
-            console.log("Reaction", arg)
+            this.logger.info("Reaction", arg)
             this.emit('msg.reaction', {})
         });
 	}
 
     incomingMessage(message: proto.IWebMessageInfo, messageData: any) {
+        console.log('messages.upsert event:', message);
         this.emit('msg.incoming', {
             message,
             messageData
@@ -260,7 +263,7 @@ export default class Whatsapp implements EzWaEventEmitter {
             })
             this._sock = conn;
         } catch (error) {
-            console.log("Socket Error:", error);
+            this.logger.info("Socket Error:", error);
         }
         return this.sock;
     }
@@ -294,11 +297,11 @@ export default class Whatsapp implements EzWaEventEmitter {
                 const err = (lastDisconnect.error as Boom).output;
                 // Connection Gone (hilang/rusak)
                 if (err.statusCode === 410 || err?.payload.message === "Stream Errored") {
-                    console.log("Stream Errored", err.payload);
+                    this.logger.info("Stream Errored", err.payload);
                     try {
                         this.stopSock();
                     } catch (error) {
-                        console.log("Stoped sock", error);
+                        this.logger.info("Stoped sock", error);
                     }
                     setTimeout(() => {
                         if (!this.isStopedByUser) {
@@ -391,9 +394,9 @@ export default class Whatsapp implements EzWaEventEmitter {
     }
 
     private async socketScanQR(codeQR: string) {
-        console.log("QR Code Update");
+        this.logger.info("QR Code Update");
         if (this.attemptQRcode > this.options.maxQrScanAttempts) {
-            console.log("Stoped Device because 5x not scanning QRcode (not used)");
+            this.logger.info("Stoped Device because 5x not scanning QRcode (not used)");
             await this.stopSock();
             this.emit('qr.stoped', {
                 state: 'expired',
@@ -699,6 +702,22 @@ export default class Whatsapp implements EzWaEventEmitter {
 
     emit<T extends keyof EzWaEventMap>(event: T, arg: EzWaEventMap[T]): boolean {
         return this.event.emit(event, arg)
+    }
+
+    once<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.once(event, listener)
+    }
+
+    async waitSockConnected() {
+        return new Promise((resolve) => {
+            if (this.status === 'connected') {
+                resolve(this.info)
+            } else {
+                this.once("sock.connected", (data) => {
+                    resolve(data)
+                })
+            }
+        })
     }
 }
 

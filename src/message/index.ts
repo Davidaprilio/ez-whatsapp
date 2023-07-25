@@ -21,6 +21,14 @@ export default class Message {
 		this.msTimeTyping = msTimeTyping
 	}
 
+	resetPayloads() {
+		this.payloads = []
+	}
+
+	resetPhones() {
+		this.toPhones = []
+	}
+
 	text(text: string): void {
 		this.makePayloadObject({
 			text
@@ -164,7 +172,7 @@ export default class Message {
 
 	reply(message: proto.IWebMessageInfo) {
 		if (message.key.remoteJid === null || message.key.remoteJid === undefined) {
-			console.log(message.key)
+			this.client.logger.info(message.key)
 			throw new Error("Reply Message but JID Not Found");
 		}
 		this.buildPayload()
@@ -198,7 +206,7 @@ export default class Message {
 	 * @returns response from wa
 	 */
 	private async sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
-		console.log('sendTo:', jid);
+		this.client.logger.info('sendTo:', jid);
 		const res = [];
 
 		for (const payload of this.payloads) {
@@ -206,8 +214,9 @@ export default class Message {
 				jid, 
 				payload, 
 				replyMessage, 
-				this.msTimeTyping)
-			console.log('RES WA', resClient);
+				this.msTimeTyping	
+			)
+			this.client.logger.info('RES WA', resClient);
 
 			res.push(resClient)
 		}
