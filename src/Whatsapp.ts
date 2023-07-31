@@ -51,7 +51,7 @@ type MessageUpsert = {
 }
 
 interface WhatsappOption {
-    // useMobile: boolean,
+    useMobile: boolean,
     useStore: boolean,
     browser: string | Client | [string,string,string],
     showQRinTerminal: boolean,
@@ -86,14 +86,14 @@ export default class Whatsapp implements EzWaEventEmitter {
     private store: MakeInMemoryStore | undefined;
     readonly logger: Logger;
     private isStopedByUser: boolean = false;
-    private attemptQRcode: number = 0;
-    private options: WhatsappOption = {
+    private _attemptQRcode: number = 0;
+    readonly options: WhatsappOption = {
         hostname: null,
         showQRinTerminal: true,
         browser: Client.Chrome,
         silentLog: true,
         useStore: false,
-        // useMobile: false,
+        useMobile: false,
         maxQrScanAttempts: 5,
         pathSession: '.session',
     };
@@ -101,6 +101,10 @@ export default class Whatsapp implements EzWaEventEmitter {
 
     get sock(): WASocket {
         return this._sock
+    }
+
+    get attemptQRcode(): number {
+        return this._attemptQRcode
     }
 
     constructor(
@@ -184,7 +188,7 @@ export default class Whatsapp implements EzWaEventEmitter {
 
                 const { key } = msg;
                 
-                if (key.fromMe = false) {
+                if (key.fromMe == false) {
                     const { id: messageID, remoteJid: jid } = key
                     const phone = jidToNumberPhone(jid || '');
                     const isGroup = isJidGroup(jid || undefined) || false;
@@ -202,9 +206,10 @@ export default class Whatsapp implements EzWaEventEmitter {
         });
 
         // Perubahan Pesan
-        this.sock.ev.on("messages.update", (m: any) => {
+        this.sock.ev.on("messages.update", (msgsUpdate) => {
             this.logger.info("===============  messages.update  ================");
-            this.logger.info(JSON.stringify(m, undefined, 2));
+            this.logger.info(JSON.stringify(msgsUpdate, undefined, 2));
+            this.emit('msg.update', msgsUpdate[0]!)
         });
 
         // State Update Online|Offline
@@ -223,7 +228,6 @@ export default class Whatsapp implements EzWaEventEmitter {
 	}
 
     incomingMessage(message: proto.IWebMessageInfo, messageData: any) {
-        console.log('messages.upsert event:', message);
         this.emit('msg.incoming', {
             message,
             messageData
@@ -258,6 +262,7 @@ export default class Whatsapp implements EzWaEventEmitter {
                 logger: this.logger,
                 browser: this.info.browser,
                 printQRInTerminal: this.options.showQRinTerminal,
+                mobile: this.options.useMobile,
                 auth: state,
                 syncFullHistory: true,
             })
@@ -377,7 +382,7 @@ export default class Whatsapp implements EzWaEventEmitter {
     // Event Handler
     private socketConnected() {
         this.logger.info("Connection Open");
-        this.attemptQRcode = 0;
+        this._attemptQRcode = 0;
         this.setStatusDeviceActive();
         this.info.qrCode = null;
         this.info.isAuth = true;
@@ -395,7 +400,7 @@ export default class Whatsapp implements EzWaEventEmitter {
 
     private async socketScanQR(codeQR: string) {
         this.logger.info("QR Code Update");
-        if (this.attemptQRcode > this.options.maxQrScanAttempts) {
+        if (this._attemptQRcode > this.options.maxQrScanAttempts) {
             this.logger.info("Stoped Device because 5x not scanning QRcode (not used)");
             await this.stopSock();
             this.emit('qr.stoped', {
@@ -404,7 +409,7 @@ export default class Whatsapp implements EzWaEventEmitter {
             })
             return;
         } else {
-            this.attemptQRcode++;
+            this._attemptQRcode++;
         }
         this.resetStatusClient();
         this.info.isAuth = false;
@@ -414,7 +419,7 @@ export default class Whatsapp implements EzWaEventEmitter {
             status: 'onscan',
             qrCode: codeQR,
             qrImage: await makeQrImage(codeQR),
-            attempt: this.attemptQRcode,
+            attempt: this._attemptQRcode,
         })
     }
 

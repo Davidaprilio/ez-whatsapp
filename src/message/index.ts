@@ -165,6 +165,13 @@ export default class Message {
 		this.buildPayload()
 		console.log(this.payloads);
 	}
+	
+	getPayloads(index?: number) {
+		this.buildPayload()
+		return index === undefined
+			? this.payloads
+			: this.payloads[index]
+	}
 
 	to(jid: string) {
 		this.toPhones.push(jid)

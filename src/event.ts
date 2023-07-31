@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { ClientInfo } from "./Whatsapp";
-import { proto } from "@whiskeysockets/baileys";
+import { WAMessageUpdate, proto } from "@whiskeysockets/baileys";
 
 const event = new EventEmitter();
 
@@ -37,6 +37,7 @@ export declare type EzWaEventMap = {
     };
 
     'msg.reaction': {};
+    'msg.update': WAMessageUpdate;
     'msg.incoming': {
         message: proto.IWebMessageInfo, 
         messageData: {
