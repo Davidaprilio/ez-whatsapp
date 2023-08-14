@@ -528,7 +528,7 @@ export default class Whatsapp implements EzWaEventEmitter {
      */
     private removeSessionPath() {
         if (fs.existsSync(this.info.authPath)) {
-            fs.rmSync(this.info.authPath, { recursive: true, force: true });
+            fs.rmSync(this.info.authPath, { recursive: true });
         }
     }
 
@@ -827,6 +827,8 @@ export default class Whatsapp implements EzWaEventEmitter {
     setPairingMode(mode: "qr", phone: undefined): void;
     setPairingMode(mode: "code" | "mobile", phone: string): void;
     setPairingMode(mode: any, phone: any) {
+        phone = phone.toString().trim()
+        if (phone.startsWith('+')) phone = phone.slice(1)
         this.pairing.mode = mode
         this.pairing.phone = phone
     }
