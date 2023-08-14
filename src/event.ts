@@ -26,6 +26,7 @@ export declare type EzWaEventMap = {
         state: 'stoped' | 'expired';
         reason?: string;
     };
+    'pair-code.update': string;
 
     'sock.connecting': {};
     'sock.connected': ClientInfo;

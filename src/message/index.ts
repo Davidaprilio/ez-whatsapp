@@ -16,7 +16,7 @@ export default class Message {
 	private skeletonPayloads: any[] = [];
 	private payloads: AnyRegularMessageContent[] = []
 
-	constructor(client: Whatsapp, msTimeTyping: number = 10) {
+	constructor(client: Whatsapp, msTimeTyping: number = 0) {
 		this.client = client
 		this.msTimeTyping = msTimeTyping
 	}

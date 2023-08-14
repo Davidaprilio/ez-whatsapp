@@ -3,6 +3,7 @@ import fs from "fs";
 import { writeFile } from 'fs/promises'
 import PinoLog from "./logger/pino";
 import mime from "mime-types";
+import parsePhoneNumber from 'libphonenumber-js'
 
 import makeWASocket, {
     AnyMessageContent,
@@ -19,6 +20,8 @@ import makeWASocket, {
     isJidGroup,
     WASocket,
     downloadMediaMessage,
+    PHONENUMBER_MCC,
+    makeCacheableSignalKeyStore,
 } from "@whiskeysockets/baileys";
 declare type MakeInMemoryStore = ReturnType<typeof makeInMemoryStore>;
 
@@ -38,6 +41,8 @@ export enum Client {
     Desktop = 'Desktop'
 }
 
+type TCodeMCC = keyof typeof PHONENUMBER_MCC
+
 type ClientStatus =
     | "stoped"
     | "disconnected"
@@ -52,6 +57,7 @@ type MessageUpsert = {
 
 interface WhatsappOption {
     useMobile: boolean,
+    mobilePhone: string | null,
     useStore: boolean,
     browser: string | Client | [string,string,string],
     showQRinTerminal: boolean,
@@ -59,6 +65,17 @@ interface WhatsappOption {
     silentLog: boolean,
     pathSession: string,
     maxQrScanAttempts: number,
+}
+
+type PairingOption = {
+    mode: "qr",
+    phone: undefined
+} | {
+    mode: "code",
+    phone: string
+} | {
+    mode: "mobile",
+    phone: string
 }
 
 export interface ClientInfo {
@@ -94,9 +111,16 @@ export default class Whatsapp implements EzWaEventEmitter {
         silentLog: true,
         useStore: false,
         useMobile: false,
+        mobilePhone: null,
         maxQrScanAttempts: 5,
         pathSession: '.session',
     };
+
+    private pairing: PairingOption = {
+        mode: 'qr',
+        phone: undefined,
+    }
+
     event: EventEmitter;
 
     get sock(): WASocket {
@@ -107,11 +131,23 @@ export default class Whatsapp implements EzWaEventEmitter {
         return this._attemptQRcode
     }
 
+    get getStore(): MakeInMemoryStore|undefined {
+        return this.store
+    }
+
     constructor(
         sessionId?: string | null,
         moreOptions?: Partial<WhatsappOption>
     ) {
         this.options = { ...this.options, ...moreOptions }
+
+        if (this.options.useMobile) {
+            if (this.options.mobilePhone === null) {
+                throw new Error("Please provide mobile phone number if useMobile set true");
+            }
+
+            // check validation phone
+        }
         sessionId = sessionId || "ez-wa";
         const pathSession = `${this.options.pathSession}/auth-state/${sessionId}`;
 
@@ -154,9 +190,15 @@ export default class Whatsapp implements EzWaEventEmitter {
             });
             this.store.readFromFile(pathSession + '/ezwa_store.json')
             // save every 10s
-            // setInterval(() => {
-            //     this.store.writeToFile('./baileys_store_multi.json')
-            // }, 10_000)
+            const intervalStore = setInterval(() => {
+                try {
+                    this.store!.writeToFile(pathSession+'/ezwa_store.json')
+                } catch (error) {
+                    if (error instanceof Error && error.message.includes("No such file or directory")) {
+                        clearInterval(intervalStore)
+                    }
+                }
+            }, 10_000)
         }
 
         this.event = new EventEmitter();
@@ -173,6 +215,16 @@ export default class Whatsapp implements EzWaEventEmitter {
 
         this.store?.bind(this.sock.ev);
         this.createEvenListener()
+
+        await this.sock.waitForSocketOpen();
+        if (this.pairing.mode === 'code' && !this.sock.authState.creds.registered) {
+            await delay(10_000)
+            const code = await this.requestPairingCode()
+            this.logger.info(`Pairing code: ${code}`)
+            if (code) {
+                this.emit('pair-code.update', code)
+            } 
+        }
         return this.sock;
     };
 
@@ -256,14 +308,29 @@ export default class Whatsapp implements EzWaEventEmitter {
         const { state, saveCreds } = await useMultiFileAuthState(this.info.authPath);
         this.saveState = saveCreds;
 
+        const isShowQRinTerminal = this.pairing.mode === 'qr' ? this.options.showQRinTerminal : false
         try {
             const conn = makeWASocket({
                 version,
                 logger: this.logger,
                 browser: this.info.browser,
-                printQRInTerminal: this.options.showQRinTerminal,
+                printQRInTerminal: isShowQRinTerminal,
                 mobile: this.options.useMobile,
-                auth: state,
+                // auth: state,
+                auth: {
+                    creds: state.creds,
+                    /** caching makes the store faster to send/recv messages */
+                    keys: makeCacheableSignalKeyStore(state.keys, this.logger),
+                },
+                getMessage: async (key) => {
+                    if(this.store) { 
+                        const msg = await this.store.loadMessage(key.remoteJid!, key.id!) 
+                        return msg?.message || undefined 
+                    } 
+                 
+                    // only if store is present 
+                    return proto.Message.fromObject({}) 
+                },
                 syncFullHistory: true,
             })
             this._sock = conn;
@@ -332,7 +399,7 @@ export default class Whatsapp implements EzWaEventEmitter {
                 // Masalah lainya
                 else {
                     const msg = lastDisconnect.error?.message || 'No Error';
-                    this.logger.error(msg + ' SOCKET CLOSED +++++++++++++++++++++++++++++')
+                    this.logger.error(lastDisconnect.error!, msg + ' SOCKET CLOSED +++++++++++++++++++++++++++++')
                     this.startSock();
                 }
             } else {
@@ -553,8 +620,8 @@ export default class Whatsapp implements EzWaEventEmitter {
         ).catch(() => null) || null
     }
 
-    createMessage() {
-        return new Message(this)
+    createMessage(msTimeTyping?: number) {
+        return new Message(this, msTimeTyping)
     }
 
     /**
@@ -723,6 +790,62 @@ export default class Whatsapp implements EzWaEventEmitter {
             }
         })
     }
+
+    
+	async register(phone: string, methodVerifyOtp: 'sms'|'voice' = 'sms'): Promise<void|never> {
+        const phoneNumber = parsePhoneNumber(phone)
+		if(!phoneNumber?.isValid()) {
+			throw new Error('Invalid phone number: ' + phone)
+		}
+        const mcc = PHONENUMBER_MCC[phoneNumber.countryCallingCode as TCodeMCC]
+		if(!mcc) {
+			throw new Error(`Could not find MCC for phone number: ${phone}\nPlease specify the MCC manually.`)
+		}
+
+        await this.startSock();
+        const { registration } = this.sock.authState.creds;
+
+        registration.phoneNumber = phoneNumber.format('E.164')
+		registration.phoneNumberCountryCode = phoneNumber.countryCallingCode
+		registration.phoneNumberNationalNumber = phoneNumber.nationalNumber
+        registration.method = methodVerifyOtp
+        registration.phoneNumberMobileCountryCode = mcc.toString()
+
+        try {
+            await this.sock.requestRegistrationCode(registration)
+        } catch(error) {
+            console.error('Failed to request registration code. Please try again.\n', error)
+        }
+	}
+
+    async requestPairingCode() {
+        if (this.pairing.mode !== 'code') return null;
+        return await this.sock.requestPairingCode(this.pairing.phone)
+    }
+
+    
+    setPairingMode(mode: "qr", phone: undefined): void;
+    setPairingMode(mode: "code" | "mobile", phone: string): void;
+    setPairingMode(mode: any, phone: any) {
+        this.pairing.mode = mode
+        this.pairing.phone = phone
+    }
+
+
+    async verifyCodeOTP(code: string|number) {
+        try {
+            const response = await this.sock!.register(code.toString().trim().toLowerCase())
+            console.log('Successfully registered your phone number.', response)
+            return true
+        } catch(error) {
+            console.error('Failed to register your phone number. Please try again.\n', error)
+            return false
+        }
+    }
+
+    async resendCodeOTP() {
+		await this.sock!.requestRegistrationCode(this.sock!.authState.creds.registration)
+	}
 }
 
 enum GroupSettingOption {
