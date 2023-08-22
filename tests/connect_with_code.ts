@@ -6,6 +6,7 @@ import { isValidNumber, question } from "../src/utils";
     
     const wa = new Whatsapp('ez-wa', {
         // silentLog: false,
+        browser: ['Chrome (Linux)', '', ''],
     });
 
     let phone = ''
