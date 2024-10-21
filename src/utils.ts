@@ -1,5 +1,6 @@
 import readline from 'readline'
 import {parsePhoneNumber} from "libphonenumber-js"
+import { jidEncode, proto } from '@whiskeysockets/baileys'
 
 // Read line interface
 const rl = readline.createInterface({ 
@@ -27,4 +28,19 @@ export function isValidNumber(phoneNumber: string, throwError: boolean = true): 
         if (throwError) throw error
         return false
     }
+}
+
+export function isIfaceInteractiveMessage(obj: any): obj is proto.Message.IInteractiveMessage {
+    const props = [
+        'shopStorefrontMessage',
+        'collectionMessage',
+        'nativeFlowMessage',
+        'carouselMessage',
+    ];
+
+    return props.some(prop => obj.hasOwnProperty(prop));
+}
+
+export function toJID(phoneNumber: string, type: 'user'|'group' = 'user') {
+    return jidEncode(phoneNumber, type === 'group' ? 'g.us' : 's.whatsapp.net')    
 }

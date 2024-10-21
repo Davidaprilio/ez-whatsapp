@@ -1,4 +1,4 @@
-import { AnyRegularMessageContent, proto } from "@whiskeysockets/baileys";
+import { AnyMessageContent, AnyRegularMessageContent, proto } from "@whiskeysockets/baileys";
 import Whatsapp from "../Whatsapp";
 import MessageButton from "./button";
 import MessageContact from "./contact";
@@ -130,7 +130,7 @@ export default class Message {
 	 *  
 	 * @param payloadMessageContent 
 	 */
-	rawPayload(payloadMessageContent: object): void {
+	rawPayload(payloadMessageContent: AnyMessageContent): void {
 		this.makePayloadObject(
 			payloadMessageContent
 		)
@@ -214,7 +214,7 @@ export default class Message {
 	 */
 	private async sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
 		this.client.logger.info('sendTo:', jid);
-		const res = [];
+		const res: any[] = [];
 
 		for (const payload of this.payloads) {
 			const resClient = await this.client.sendMessageWithTyping(

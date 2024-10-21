@@ -20,26 +20,56 @@ const wa: Whatsapp = new Whatsapp('david-14A', {
 			const isRegister = await wa.isRegistWA(jid);
 			console.log('isRegister', isRegister);
 			if (isRegister) {
-                // const msg = wa.createMessage()
+                const msg = wa.createMessage(typeMsg? = basic)
                 // Make Text message
-				// msg.text('WA Tersambung')
-
+				msg.header('type', {
+                    url: 'as'
+                })
+				msg.title('WA Tersambung')
+				msg.body([
+                    'hello',
+                    '1. ',
+                    '2. ',
+                ])
+				msg.footer('WA Tersambung')
+				msg.send(jid)
+                msg.reply()
+                
                 // Make button message
-				// msg.button('Text message', 'Footer Message')
-				// 	.image('https://www.w3schools.com/tags/smiley.gif') // belum bisa
-				// 	.add('Button 1')
-				// 	.add('Button 2')
-				// 	.add('Button 3');
+                const msgBtn = wa.createButtonMessage()
+				msgBtn
+                    .header()
+                    .title()
+                    .body()
+                    .footer()
+                    .addButtonReplay('Footer Message', 'id')
+                    .addButtonUrl('http', 'id')
+                    .addButtonMerchant('http', 'id')
+                    .addButtonCopy('123456', 'id')
+                    .addButton('type', {
+                        ...options
+                    })
+                    .getPayload()
+                    .send(jid, {replyMsgId: ''})
+                    .reply(msg)
+					// .image('https://www.w3schools.com/tags/smiley.gif') // belum bisa
+					// .add('Button 1')
+					// .add('Button 2')
+					// .add('Button 3');
 
                 // Make List Message
-                // const listMsg = msg.list('Pesan List Option', 'Silahkan pilih opsi dibawah')
-                // listMsg.section('Section 1', (section: OptionSection) => {
-                //     section.option('option1', 'Option 1')
-                //     section.option('option2', 'Option 2', 'Option description')
-                // })
-                // listMsg.addSection('Section 2')
-                //     .addOption('option1', 'Option 1')
-                //     .addOption('option2', 'Option 2', 'Option description')
+                const listMsg = wa.createListMessage()
+                    .header()
+                    .title()
+                    .body()
+                    .footer()
+                    .addSection('Section 1', (section: OptionSection) => {
+                        section.option('option1', 'Option 1')
+                        section.option('option2', 'Option 2', 'Option description')
+                    })
+                listMsg.addSection('Section 2')
+                    .addOption('option1', 'Option 1')
+                    .addOption('option2', 'Option 2', 'Option description')
 
                 // Make Template Message
                 // msg.template('Pesan Template')

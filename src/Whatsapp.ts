@@ -1,7 +1,7 @@
 import { Boom } from "@hapi/boom";
 import fs from "fs";
 import { writeFile } from 'fs/promises'
-import PinoLog from "./logger/pino";
+// import PinoLog from "./logger/pino";
 import mime from "mime-types";
 import parsePhoneNumber from 'libphonenumber-js'
 
@@ -28,7 +28,7 @@ declare type MakeInMemoryStore = ReturnType<typeof makeInMemoryStore>;
 import { convertToJID, jidToNumberPhone, makeQrImage } from "./helper";
 
 import Message from "./message/index";
-import { Logger } from "pino";
+import { pino, type Logger } from '@whiskeysockets/baileys/node_modules/pino';
 import { EventEmitter } from "events";
 import { EzWaEventEmitter, EzWaEventMap } from "./event";
 
@@ -177,7 +177,7 @@ export default class Whatsapp implements EzWaEventEmitter {
         };
 
         // make Logger
-        this.logger = PinoLog.child({});
+        this.logger = pino();
         this.logger.level = this.options.silentLog ? "silent" : "debug";  
 
         if (this.options.useStore) {
@@ -258,7 +258,7 @@ export default class Whatsapp implements EzWaEventEmitter {
         });
 
         // Perubahan Pesan
-        this.sock.ev.on("messages.update", (msgsUpdate) => {
+        this.sock.ev.on("messages.update", (msgsUpdate: any[]) => {
             this.logger.info("===============  messages.update  ================");
             this.logger.info(JSON.stringify(msgsUpdate, undefined, 2));
             this.emit('msg.update', msgsUpdate[0]!)
@@ -322,7 +322,7 @@ export default class Whatsapp implements EzWaEventEmitter {
                     /** caching makes the store faster to send/recv messages */
                     keys: makeCacheableSignalKeyStore(state.keys, this.logger),
                 },
-                getMessage: async (key) => {
+                getMessage: async (key: { remoteJid: any; id: any; }) => {
                     if(this.store) { 
                         const msg = await this.store.loadMessage(key.remoteJid!, key.id!) 
                         return msg?.message || undefined 
@@ -487,6 +487,7 @@ export default class Whatsapp implements EzWaEventEmitter {
             qrCode: codeQR,
             qrImage: await makeQrImage(codeQR),
             attempt: this._attemptQRcode,
+            remain: 0,
         })
     }
 
@@ -559,26 +560,29 @@ export default class Whatsapp implements EzWaEventEmitter {
         replayMsg?: proto.IWebMessageInfo,
         msTimeTyping?: number
     ) => {
-        const jidRegistered = await this.isRegistWA(jidOrPhone)
-        if (jidRegistered === false) {
-            return {
-                status: false,
-                error: true,
-                message: "phone number is not registered",
-                response: null,
-                err: 'phone.not_registered'
-            }
-        }
-        
-        if (msTimeTyping) {
-            await this.sock.presenceSubscribe(jidRegistered);
-            await this.sock.sendPresenceUpdate("composing", jidRegistered);
-            await delay(msTimeTyping); // ms
-            await this.sock.sendPresenceUpdate("paused", jidRegistered);
-        }
-
-        const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
         try {
+            let jidRegistered: string | false = jidOrPhone 
+            if (!jidOrPhone.endsWith('@g.us')) {
+                jidRegistered = await this.isRegistWA(jidOrPhone)
+                if (jidRegistered === false) {
+                    return {
+                        status: false,
+                        error: true,
+                        message: "phone number is not registered",
+                        response: null,
+                        err: 'phone.not_registered'
+                    }
+                }
+            }
+        
+            if (msTimeTyping) {
+                await this.sock.presenceSubscribe(jidRegistered);
+                await this.sock.sendPresenceUpdate("composing", jidRegistered);
+                await delay(msTimeTyping); // ms
+                await this.sock.sendPresenceUpdate("paused", jidRegistered);
+            }
+
+            const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
             return await this.sock.sendMessage(jidRegistered, msg, quotedMsg);
         } catch (error) {
             const err = (error as Boom)?.output;

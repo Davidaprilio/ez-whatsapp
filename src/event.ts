@@ -18,6 +18,7 @@ export declare type EzWaEventMap = {
     'qr.update': {
         status: 'onscan' | 'stop' | 'expired';
         attempt: number;
+        remain: number;
         qrCode?: string;
         qrImage?: string;
         reason?: string;
