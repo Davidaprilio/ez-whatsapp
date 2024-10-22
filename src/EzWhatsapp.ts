@@ -2,9 +2,6 @@ import { writeFile } from 'fs/promises'
 import mime from "mime-types";
 
 import {
-    AnyMessageContent,
-    delay,
-    makeInMemoryStore,
     Browsers,
     WAMessage,
     MessageUpsertType,
@@ -12,16 +9,15 @@ import {
     downloadMediaMessage,
     PHONENUMBER_MCC,
     jidEncode,
-    generateWAMessageFromContent,
-    MessageGenerationOptionsFromContent,
     WAProto,
-    isJidUser,
 } from "@whiskeysockets/baileys";
 
 import {IClientOptions, default as WaClient} from './client'
 import Group from "./group";
-import { CreateButtonMessage } from "./classes/messageBuilder/createButtonMessage";
+import { IOptionButtonMessage, ButtonMessage } from "./classes/messageBuilder/ButtonMessage";
 import { MessageContext } from "./classes/messageContext";
+import { IOptionListMessage, ListMessage } from './classes/messageBuilder/ListMessage';
+import { CaroselMessage, IOptionCaroselMessage } from './classes/messageBuilder/CaroselMessage';
 
 export enum Client {
     Chrome = 'Chrome',
@@ -309,11 +305,29 @@ export default class EzWhatsapp extends WaClient {
         })
     }
 
-    createMessage(type: 'button'|'list'|'carosel'|'text') {
+    createMessage(type: 'button', payload?: IOptionButtonMessage): ButtonMessage
+    createMessage(type: 'list', payload?: IOptionListMessage): ListMessage
+    createMessage(type: 'carosel', payload?: IOptionCaroselMessage): CaroselMessage
+    createMessage(type: 'button'|'list'|'carosel'|'text' = 'text', payload: any): any {
         if (type === 'button') {
-            return new CreateButtonMessage()
+            return new ButtonMessage(payload)
+        } else if (type === 'list') {
+            return new ListMessage(payload)
+        } else if (type === 'carosel') {
+            return new CaroselMessage(this.sock, payload)
         }
-        return
+
+        return Error('Type Message Not Found')
+    }
+
+    createMessageButton(payload?: IOptionButtonMessage) {
+        return this.createMessage('button', payload)
+    }
+    createMessageList(payload?: IOptionListMessage) {
+        return this.createMessage('list', payload)
+    }
+    createMessageCarosel(payload?: IOptionCaroselMessage) {
+        return this.createMessage('carosel', payload)
     }
 }
 

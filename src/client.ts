@@ -1,12 +1,12 @@
 import { Boom } from "@hapi/boom";
-import makeWASocket, { AnyMessageContent, Browsers, ConnectionState, delay, DisconnectReason, fetchLatestBaileysVersion, generateWAMessageFromContent, isJidUser, makeCacheableSignalKeyStore, MessageGenerationOptionsFromContent, proto, useMultiFileAuthState, WABrowserDescription, WASocket, WAVersion } from "@whiskeysockets/baileys";
+import makeWASocket, { AnyMediaMessageContent, AnyMessageContent, Browsers, ConnectionState, delay, DisconnectReason, fetchLatestBaileysVersion, generateWAMessageFromContent, isJidUser, makeCacheableSignalKeyStore, MediaGenerationOptions, MessageGenerationOptionsFromContent, prepareWAMessageMedia, proto, useMultiFileAuthState, WABrowserDescription, WASocket, WAVersion } from "@whiskeysockets/baileys";
 import { pino, type Logger } from "@whiskeysockets/baileys/node_modules/pino";
 import axios from "axios";
 import EventEmitter from "events";
 import fs from "fs";
 import { EzWaEventMap } from "./event";
 import { convertToJID, makeQrImage } from "./helper";
-import { toJID } from "./utils";
+import { toJID } from "./misc/utils";
 
 export interface IClientOptions {
     authDir: string
@@ -424,6 +424,12 @@ export default class Client {
         return this.sock.sendPresenceUpdate('recording', toJid);
     }
 
+    prepareWAMessageMedia(message: AnyMediaMessageContent, options?: Omit<MediaGenerationOptions,'upload'>) {
+        return prepareWAMessageMedia(message, {
+            ...options,
+            upload: this.sock.waUploadToServer
+        })
+    }
 
     /**
      * specifically for sending interactive messages

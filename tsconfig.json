@@ -25,9 +25,6 @@
     "noUnusedLocals": false, // Report errors on unused local variables.
     "noUnusedParameters": true, // Report errors on unused parameters in functions
     "baseUrl": "./",
-    "paths": {
-      "@/*": ["./src/*"]
-    }
   },
   "include": ["./src/**/*.ts"],
   "exclude": [

@@ -1,34 +1,25 @@
 import { proto } from "@whiskeysockets/baileys";
 import { InteractiveMessage } from "./InteractiveMessage";
+import { IButtonParams, IButtonProps } from "../../misc/types";
+import { createObjectButtonMessage } from "../../misc/utils";
 
-export type ButtonType = 'cta_url' | 'cta_call' | 'cta_copy' | 'cta_reminder' | 'cta_cancel_reminder' | 'address_message' | 'send_location' | 'quick_reply';
-
-export interface ICreateButtonMessage {
+export interface IOptionButtonMessage {
     title?: string,
     body: string|string[],
     footer?: string,
-    buttons: {
-        name: ButtonType,
-        id: string,
-        display_text: string
-    }[]
+    buttons: IButtonProps[]
 }
 
-export class CreateButtonMessage extends InteractiveMessage {
-    private options: ICreateButtonMessage;
+export class ButtonMessage extends InteractiveMessage {
+    private options: IOptionButtonMessage;
 
-    constructor(options?: ICreateButtonMessage) {
+    constructor(options?: IOptionButtonMessage) {
         super()
 
         this.options = options ?? {
             body: '',
             buttons: []
         }
-    }
-
-    private renderText(text: string|null|undefined) {
-        if (text) return text
-        return undefined
     }
 
     setTitle(text?: string) {
@@ -46,22 +37,22 @@ export class CreateButtonMessage extends InteractiveMessage {
         return this
     }
 
-    addButton(type: ButtonType, options: Record<string, any>) {
+    addButton<T extends keyof IButtonParams>(type: T, options: IButtonParams[T]): ButtonMessage {
         if (!this.options.buttons) {
             this.options.buttons = []
         }
 
-        this.options.buttons.push({
-            name: type,
-            id: options.id,
-            display_text: options.display_text
-        })
+        this.options.buttons.push(createObjectButtonMessage(type, options))
         return this
+    }
+
+    private generateId(id?: string) {
+        return id ?? (this.options.buttons.length + 1).toString()
     }
     
     addButtonReply(displayText: string, id?: string) {
         this.addButton('quick_reply', {
-            id: id,
+            id: this.generateId(id),
             display_text: displayText
         })
         return this
@@ -69,8 +60,27 @@ export class CreateButtonMessage extends InteractiveMessage {
 
     addButtonCopy(copyText: string, id?: string) {
         this.addButton('cta_copy', {
-            id: id,
+            id: this.generateId(id),
             copy_code: copyText
+        })
+        return this
+    }
+
+    addButtonUrl(url: string, id?: string) {
+        this.addButton('cta_url', {
+            id: this.generateId(id),
+            url
+        })
+        return this
+    }
+
+    /**
+     * @param phoneNumber include country code
+     */
+    addButtonCall(phoneNumber: string, id?: string) {
+        this.addButton('cta_call', {
+            id: this.generateId(id),
+            call: phoneNumber
         })
         return this
     }

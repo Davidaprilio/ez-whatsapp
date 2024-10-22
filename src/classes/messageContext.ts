@@ -1,6 +1,6 @@
 import { AnyMessageContent, isJidGroup, proto } from "@whiskeysockets/baileys";
 import type Client from "../client";
-import { isIfaceInteractiveMessage } from "../utils";
+import { isIfaceInteractiveMessage } from "../misc/utils";
 
 type ContextMessageContent = string|AnyMessageContent|proto.Message.IInteractiveMessage
 
