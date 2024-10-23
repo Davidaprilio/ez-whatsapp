@@ -27,3 +27,15 @@ export interface IButtonParams {
 export type ButtonParamsAny = {
     [K in keyof IButtonParams]: IButtonParams[K] extends { id: string } ? Partial<IButtonParams[K]> : never;
 }[keyof IButtonParams];
+
+
+export interface IVCard {
+    phone: string
+    fullName: string
+    org?: string
+}
+export interface ILocation {
+    phone: string
+    fullName: string
+    org?: string
+}

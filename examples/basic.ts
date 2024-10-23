@@ -13,17 +13,47 @@ import { createObjectButtonMessage } from "../src/misc/utils";
 
     const imgUrl = 'https://placehold.co/300x200?text=Powered+By\nEZ-Whatsapp'
 
+
     // use send for only send msg without quoted msg
     wa.respond('!ping', async (ctx) => {
         await ctx.simulateTyping(2_000)
         await ctx.send('pong')
     });
+
     
     // use reply if send with quoted msg
     wa.respond('!rping', async (ctx) => {
         await ctx.simulateTyping(2_000)
         await ctx.reply('pong')
     });
+
+
+    // use reply if send with quoted msg
+    wa.respond('!image', async (ctx) => {
+        const img = await wa.prepareWAMessageMedia({
+            image: {url: imgUrl},
+        })
+        await ctx.reply({
+            header: {
+                hasMediaAttachment: true,
+                ...img
+            },
+        })
+    });
+
+
+    // use reply if send with quoted msg
+    wa.respond('!contact', async (ctx) => {
+        await ctx.reply(
+            wa.createMessage('contact', [
+                {
+                    fullName: 'Foo Bazz',
+                    phone: '620123456789'
+                }
+            ]).getPayload()
+        )
+    });
+
 
     // kirim pesan button
     wa.respond('!button', async (ctx) => {
@@ -34,6 +64,7 @@ import { createObjectButtonMessage } from "../src/misc/utils";
         await ctx.reply(msg.getPayload())
     });
     
+
     // kirim pesan carosel
     wa.respond('!carosel', async (ctx) => {
         const msg = wa.createMessage('carosel')
@@ -54,7 +85,6 @@ import { createObjectButtonMessage } from "../src/misc/utils";
                     image: { url: imgUrl }
                 })
             },
-            body: 'manual', 
             button: createObjectButtonMessage('quick_reply', {
                 id: 'btn1',
                 display_text: 'Klik Me',
@@ -63,6 +93,7 @@ import { createObjectButtonMessage } from "../src/misc/utils";
 
         await ctx.reply(msg.getPayload())
     });
+
 
     // kirim pesan list
     wa.respond('!list', async (ctx) => {
@@ -76,6 +107,7 @@ import { createObjectButtonMessage } from "../src/misc/utils";
             
         await ctx.reply(msg.getPayload())
     });
+
 
     // custom matcher
     wa.respond(async (body, _msg) => {

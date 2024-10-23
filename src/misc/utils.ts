@@ -3,7 +3,7 @@ import {parsePhoneNumber} from "libphonenumber-js"
 import { AnyMediaMessageContent, jidEncode, prepareWAMessageMedia, proto, WASocket } from '@whiskeysockets/baileys'
 import { dirname } from "path";
 import QRCode from 'qrcode';
-import { IButtonParams, IButtonProps } from './types';
+import { IButtonParams, IButtonProps, IVCard } from './types';
 
 // Read line interface
 const rl = readline.createInterface({ 
@@ -102,4 +102,27 @@ export function createInteractiveMessageContent(content: IInteractiveMessageCont
     }
 
     return proto.Message.InteractiveMessage.create(msg)    
+}
+
+
+/**
+ * create vcard string format 
+ * phone must be include country code without +
+ *
+ */
+export function createVCardFormat(props: IVCard) {
+    const phoneParsed = props.phone.trim().match(/\d+/g)?.join('') ?? ''
+    if (phoneParsed === '') {
+        throw new Error('invalid given phone number')
+    }
+    props.phone = phoneParsed
+
+    return [
+        'BEGIN:VCARD',
+        'VERSION:3.0',
+        `FN:${props.fullName}`,
+        `ORG:${props.org??''};`,
+        `TEL;type=CELL;type=VOICE;waid=${props.phone}:+${props.phone}`,
+        'END:VCARD',
+    ].join('\n')
 }

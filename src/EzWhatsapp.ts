@@ -18,6 +18,8 @@ import { IOptionButtonMessage, ButtonMessage } from "./classes/messageBuilder/Bu
 import { MessageContext } from "./classes/messageContext";
 import { IOptionListMessage, ListMessage } from './classes/messageBuilder/ListMessage';
 import { CaroselMessage, IOptionCaroselMessage } from './classes/messageBuilder/CaroselMessage';
+import { VCardMessage } from './classes/messageBuilder/VCardMessage';
+import { IVCard } from './misc/types';
 
 export enum Client {
     Chrome = 'Chrome',
@@ -65,6 +67,7 @@ export default class EzWhatsapp extends WaClient {
         matcher: RespondMather
         handler: RespondHandler
     }[] = []
+    private _onNewMessageHandler?: (message: proto.IWebMessageInfo) => Promise<void>
 
     constructor(options?: Partial<IClientOptions>) {
         super({
@@ -257,8 +260,18 @@ export default class EzWhatsapp extends WaClient {
         })
     }
 
+    onNewMessage(callback: (message: proto.IWebMessageInfo) => Promise<void>) {
+        this._onNewMessageHandler = callback
+    }
+
     private async runAutoRespond(messages: proto.IWebMessageInfo[]) {
         for (const message of messages) {
+            try {
+                this._onNewMessageHandler && this._onNewMessageHandler(message)
+            } catch (error) {
+                this.logger.error({error}, 'Error on Handler onNewMessage')
+            }
+
             let bodyMsg = message.message?.conversation || message.message?.extendedTextMessage?.text
             if (!bodyMsg) continue
             bodyMsg = bodyMsg.trim()
@@ -308,26 +321,32 @@ export default class EzWhatsapp extends WaClient {
     createMessage(type: 'button', payload?: IOptionButtonMessage): ButtonMessage
     createMessage(type: 'list', payload?: IOptionListMessage): ListMessage
     createMessage(type: 'carosel', payload?: IOptionCaroselMessage): CaroselMessage
-    createMessage(type: 'button'|'list'|'carosel'|'text' = 'text', payload: any): any {
+    createMessage(type: 'contact', contacts?: IVCard[]): VCardMessage
+    createMessage(type: 'button'|'list'|'carosel'|'contact'|'text' = 'text', payload: any): any {
         if (type === 'button') {
-            return new ButtonMessage(payload)
+            return this.createMessageButton(payload)
         } else if (type === 'list') {
-            return new ListMessage(payload)
+            return this.createMessageList(payload)
         } else if (type === 'carosel') {
-            return new CaroselMessage(this.sock, payload)
+            return this.createMessageCarosel(payload)
+        } else if (type === 'contact') {
+            return this.createMessageContact(payload)
         }
-
+        
         return Error('Type Message Not Found')
     }
-
+    
     createMessageButton(payload?: IOptionButtonMessage) {
-        return this.createMessage('button', payload)
+        return new ButtonMessage(payload)
     }
     createMessageList(payload?: IOptionListMessage) {
-        return this.createMessage('list', payload)
+        return new ListMessage(payload)
     }
     createMessageCarosel(payload?: IOptionCaroselMessage) {
-        return this.createMessage('carosel', payload)
+        return new CaroselMessage(this.sock, payload)
+    }
+    createMessageContact(contacts?: IVCard[]) {
+        return new VCardMessage(contacts)
     }
 }
 
