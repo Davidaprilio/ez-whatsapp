@@ -1,6 +1,6 @@
 {
   "name": "ez-whatsapp",
-  "version": "1.0.3",
+  "version": "2.0.0-aplha.1",
   "description": "Baileys API wrapper for easier usage",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -63,5 +63,8 @@
   },
   "files": [
     "lib/**/*"
-  ]
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  }
 }
