@@ -1,9 +1,9 @@
 import { Boom } from "@hapi/boom";
 import fs from "fs";
 import { writeFile } from 'fs/promises'
-import { randomUUID } from "crypto";
-import PinoLog from "./logger/pino";
+// import PinoLog from "./logger/pino";
 import mime from "mime-types";
+import parsePhoneNumber from 'libphonenumber-js'
 
 import makeWASocket, {
     AnyMessageContent,
@@ -18,16 +18,19 @@ import makeWASocket, {
     MessageUpsertType,
     proto,
     isJidGroup,
-    PresenceData,
     WASocket,
-    downloadMediaMessage
-} from "@adiwajshing/baileys";
+    downloadMediaMessage,
+    PHONENUMBER_MCC,
+    makeCacheableSignalKeyStore,
+} from "@whiskeysockets/baileys";
+declare type MakeInMemoryStore = ReturnType<typeof makeInMemoryStore>;
 
-import { convertToJID, log, jidToNumberPhone } from "./helper";
+import { convertToJID, jidToNumberPhone, makeQrImage } from "./helper";
 
-import event from "./event";
 import Message from "./message/index";
-import { Logger } from "pino";
+import { pino, type Logger } from '@whiskeysockets/baileys/node_modules/pino';
+import { EventEmitter } from "events";
+import { EzWaEventEmitter, EzWaEventMap } from "./event";
 
 export enum Client {
     Chrome = 'Chrome',
@@ -37,6 +40,8 @@ export enum Client {
     Opera = 'Opera',
     Desktop = 'Desktop'
 }
+
+type TCodeMCC = keyof typeof PHONENUMBER_MCC
 
 type ClientStatus =
     | "stoped"
@@ -50,33 +55,30 @@ type MessageUpsert = {
     type: MessageUpsertType
 }
 
-type PresenceUpdate = { 
-    id: string, 
-    presences: { 
-        [participant: string]: PresenceData
-    } 
-}
-
-interface CallableFunctions {
-    onStoped: Function,
-    onDisconnected: Function,
-    onConnecting: Function,
-    onScanQR: Function,
-    onConnected: Function,
-    onIncomingMessage: Function,
-    onClickButtonMessage: Function,
-    onReactionMessage: Function,
-    onStopedSession: Function,
-}
-
 interface WhatsappOption {
+    useMobile: boolean,
+    mobilePhone: string | null,
+    useStore: boolean,
     browser: string | Client | [string,string,string],
-    storeSession: boolean,
-    showQRcode: boolean,
-    silentLog: boolean
+    showQRinTerminal: boolean,
+    hostname: string | null,
+    silentLog: boolean,
+    pathSession: string,
+    maxQrScanAttempts: number,
 }
 
-interface ClientInfo {
+type PairingOption = {
+    mode: "qr",
+    phone: undefined
+} | {
+    mode: "code",
+    phone: string
+} | {
+    mode: "mobile",
+    phone: string
+}
+
+export interface ClientInfo {
     id: string;
     hostname: string | null;
     authPath: string;
@@ -92,68 +94,77 @@ interface ClientInfo {
     more?: any;
 }
 
-export default class Whatsapp {
+export default class Whatsapp implements EzWaEventEmitter {
     info: ClientInfo;
-    sock: WASocket; // Socket dari makeWALegacySocket | makeWASocket
-
-    // private queueMessage: [];
+    private _sock: WASocket; // Socket dari makeWALegacySocket | makeWASocket
     private status: string;
     private saveState: any;
     private connectionLostCount: number = 0; // jumlah koneksi timeout 
-    private store: any;
-    private logger: Logger;
-    private silentLogging: boolean;
+    private store: MakeInMemoryStore | undefined;
+    readonly logger: Logger;
     private isStopedByUser: boolean = false;
-    private attemptQRcode: number = 0;
-    private callableFunctions: CallableFunctions = {
-        onConnected: () => {},
-        onDisconnected: () => {},
-        onConnecting: () => {},
-        onStoped: () => {},
-        onScanQR: () => {},
-        onIncomingMessage: () => {},
-        onClickButtonMessage: () => {},
-        onReactionMessage: () => {},
-        onStopedSession: () => {},
-    }
-    private options = {
-        showQRCode: false
+    private _attemptQRcode: number = 0;
+    readonly options: WhatsappOption = {
+        hostname: null,
+        showQRinTerminal: true,
+        browser: Client.Chrome,
+        silentLog: true,
+        useStore: false,
+        useMobile: false,
+        mobilePhone: null,
+        maxQrScanAttempts: 5,
+        pathSession: '.session',
     };
 
+    private pairing: PairingOption = {
+        mode: 'qr',
+        phone: undefined,
+    }
+
+    event: EventEmitter;
+
+    get sock(): WASocket {
+        return this._sock
+    }
+
+    get attemptQRcode(): number {
+        return this._attemptQRcode
+    }
+
+    get getStore(): MakeInMemoryStore|undefined {
+        return this.store
+    }
+
     constructor(
-        client_id?: string | null, 
-        hostname: string | null = null,
+        sessionId?: string | null,
         moreOptions?: Partial<WhatsappOption>
     ) {
-        const defaultOptions: WhatsappOption = {
-            browser: Client.Chrome,
-            showQRcode: false,
-            silentLog: true,
-            storeSession: true,
-        } 
-        const options: WhatsappOption = { ...defaultOptions, ...moreOptions }
+        this.options = { ...this.options, ...moreOptions }
 
-        this.options.showQRCode = options.showQRcode
-        this.silentLogging = options.silentLog;
-        if (client_id === null || client_id === undefined) {
-            client_id = "wac-" + randomUUID();
+        if (this.options.useMobile) {
+            if (this.options.mobilePhone === null) {
+                throw new Error("Please provide mobile phone number if useMobile set true");
+            }
+
+            // check validation phone
         }
-        const pathAuth = `.session/auth-state/${client_id}`;
+        sessionId = sessionId || "ez-wa";
+        const pathSession = `${this.options.pathSession}/auth-state/${sessionId}`;
 
-        const browserSocket = Array.isArray(options.browser) ? options.browser : Browsers.appropriate(options.browser);
+        const browserSocket = Array.isArray(this.options.browser) ? this.options.browser : Browsers.appropriate(this.options.browser);
         // create name host
-        if (hostname) {
+        if (this.options.hostname) {
             if (browserSocket[1] in Client) {
-                browserSocket[0] = hostname
+                browserSocket[0] = this.options.hostname
             } else {
-                browserSocket[0] = `${browserSocket[1]}(${hostname})`
+                browserSocket[0] = `${browserSocket[1]}(${this.options.hostname})`
             }
         }
 
         this.info = {
-            id: client_id,
-            hostname,
-            authPath: pathAuth,
+            id: sessionId,
+            hostname: this.options.hostname,
+            authPath: pathSession,
             ppURL: null,
             pushName: null,
             phoneNumber: null,
@@ -166,82 +177,94 @@ export default class Whatsapp {
         };
 
         // make Logger
-        this.logger = PinoLog.child({});
-        this.logger.level = this.silentLogging ? "silent" : "debug";
+        this.logger = pino();
+        this.logger.level = this.options.silentLog ? "silent" : "debug";  
 
-        if (options.storeSession) {
+        if (this.options.useStore) {
             // buat path untuk simpan auth session
-            if (!fs.existsSync(pathAuth)) fs.mkdirSync(pathAuth, { recursive: true });
+            if (!fs.existsSync(pathSession)) fs.mkdirSync(pathSession, { recursive: true });
 
-            // this.setStatusDeviceDeactive();
             // untuk menyimpan data socket, session, chat dll
             this.store = makeInMemoryStore({
                 logger: this.logger,
             });
+            this.store.readFromFile(pathSession + '/ezwa_store.json')
+            // save every 10s
+            const intervalStore = setInterval(() => {
+                try {
+                    this.store!.writeToFile(pathSession+'/ezwa_store.json')
+                } catch (error) {
+                    if (error instanceof Error && error.message.includes("No such file or directory")) {
+                        clearInterval(intervalStore)
+                    }
+                }
+            }, 10_000)
         }
+
+        this.event = new EventEmitter();
     }
 
-    startSock = async (skipStopState = false) => {
-        if (skipStopState) {
-            this.isStopedByUser = false;
-        }
-
+    startSock = async ():Promise<WASocket> => {
         if (this.status == "active") {
-            console.log(`Client ${this.info.id} already connected`);
+            this.logger.info(`Client ${this.info.id} already connected`);
             return this.sock;
         }
 
         // buat sock dari client yang diberikan
-        await this.createSock(this.info.browser);
+        await this.createSock();
 
-        this.store.bind(this.sock.ev);
+        this.store?.bind(this.sock.ev);
+        this.createEvenListener()
 
-        /* ---Set Event If Already Connect--- */
+        await this.sock.waitForSocketOpen();
+        if (this.pairing.mode === 'code' && !this.sock.authState.creds.registered) {
+            await delay(10_000)
+            const code = await this.requestPairingCode()
+            this.logger.info(`Pairing code: ${code}`)
+            if (code) {
+                this.emit('pair-code.update', code)
+            } 
+        }
+        return this.sock;
+    };
 
-        // Pesan masuk
+    private createEvenListener() {
+		// Pesan masuk
         this.sock.ev.on("messages.upsert", async ({ messages, type }: MessageUpsert) => {
+            
             // notify => notify the user, this message was just received
             // append => append the message to the chat history, no notification required
             if (type === "append" || type === "notify") {
-                messages.forEach(msg => {
-                    const { pushName, messageTimestamp, key, message } = msg;
+                const msg = messages[0];
+                if (msg === undefined) return;
+
+                const { key } = msg;
+                
+                if (key.fromMe == false) {
                     const { id: messageID, remoteJid: jid } = key
                     const phone = jidToNumberPhone(jid || '');
+                    const isGroup = isJidGroup(jid || undefined) || false;
                     
-                    if (key.fromMe) {
-                        event.emit("message.out", this.info.id, {
-                            messageID,
-                            timestamp: messageTimestamp,
-                        });
-                    } else {
-                        const isGroup = isJidGroup(jid || undefined) || false;
-                        this.incomingMessage(msg, isGroup, key.fromMe || false, jid || null, messageID || null)
-                        // Incomming Messages
-                        event.emit("message.in", this.info.id, {
-                            messageID,
-                            jid,
-                            pushName,
-                            phone,
-                            text: message?.conversation,
-                            timestamp: messageTimestamp,
-                        });
-                    }
-                })
+                    this.incomingMessage(msg, {
+                        isGroup,
+                        phoneNumber: phone,
+                        messageID,
+                        jid,
+                    })
+                }
             } else {
-                console.log("Incoming Message unknown Type: ", type, messages);
+                this.logger.info("Incoming Message unknown Type: ", type, messages);
             }
         });
 
         // Perubahan Pesan
-        this.sock.ev.on("messages.update", (m: any) => {
-            log("===============  messages.update  ================");
-            log(JSON.stringify(m, undefined, 2));
+        this.sock.ev.on("messages.update", (msgsUpdate: any[]) => {
+            this.logger.info("===============  messages.update  ================");
+            this.logger.info(JSON.stringify(msgsUpdate, undefined, 2));
+            this.emit('msg.update', msgsUpdate[0]!)
         });
 
         // State Update Online|Offline
-        this.sock.ev.on("presence.update", (presence: PresenceUpdate) => this.presenceUpdated(presence));
-        // this.sock.ev.on("chats.update", (m: any) => log(m));
-        // this.sock.ev.on("contacts.update", (m: any) => log(m));
 
         this.sock.ev.on("connection.update", (update: any) => {
             this.connectionUpdate(update);
@@ -251,29 +274,16 @@ export default class Whatsapp {
         this.sock.ev.on("creds.update", this.saveState);
 
         this.sock.ev.on("messages.reaction", (arg: { key: proto.IMessageKey; reaction: proto.IReaction; }[]) => {
-            log("Reaction", arg)
-            this.emitCallback(
-                this.callableFunctions.onReactionMessage,
-
-            )
+            this.logger.info("Reaction", arg)
+            this.emit('msg.reaction', {})
         });
+	}
 
-        // setInterval(() => {
-        //   this.store.writeToFile(this.info.store);
-        // }, 10_000);
-
-        return this.sock;
-    };
-
-    incomingMessage(message: proto.IWebMessageInfo, isGroup: boolean, isFromMe: boolean, jid: string|null, messageID: string|null) {
-        this.emitCallback(
-            this.callableFunctions.onIncomingMessage,
+    incomingMessage(message: proto.IWebMessageInfo, messageData: any) {
+        this.emit('msg.incoming', {
             message,
-            isGroup,
-            isFromMe,
-            jid,
-            messageID
-        )        
+            messageData
+        })       
     }
 
     /**
@@ -288,10 +298,7 @@ export default class Whatsapp {
      * @param multiDevice: Mode Client Legacy|MultiDevice(default)
      * @returns Object
      */
-    async createSock(
-        browser: [string, string, string],
-        showQRcode: boolean = true,
-    ) {
+    private async createSock() {
         const { version, isLatest } = await fetchLatestBaileysVersion();
         console.log(`====================== Whatsapp API ======================`);
         console.log(` Using WA v${version.join(".")} | isLatest: ${isLatest} | cid: ${this.info.id}`);
@@ -301,18 +308,34 @@ export default class Whatsapp {
         const { state, saveCreds } = await useMultiFileAuthState(this.info.authPath);
         this.saveState = saveCreds;
 
+        const isShowQRinTerminal = this.pairing.mode === 'qr' ? this.options.showQRinTerminal : false
         try {
             const conn = makeWASocket({
                 version,
                 logger: this.logger,
-                browser,
-                printQRInTerminal: showQRcode,
-                auth: state,
-                syncFullHistory: true
+                browser: this.info.browser,
+                printQRInTerminal: isShowQRinTerminal,
+                mobile: this.options.useMobile,
+                // auth: state,
+                auth: {
+                    creds: state.creds,
+                    /** caching makes the store faster to send/recv messages */
+                    keys: makeCacheableSignalKeyStore(state.keys, this.logger),
+                },
+                getMessage: async (key: { remoteJid: any; id: any; }) => {
+                    if(this.store) { 
+                        const msg = await this.store.loadMessage(key.remoteJid!, key.id!) 
+                        return msg?.message || undefined 
+                    } 
+                 
+                    // only if store is present 
+                    return proto.Message.fromObject({}) 
+                },
+                syncFullHistory: true,
             })
-            this.sock = conn;
+            this._sock = conn;
         } catch (error) {
-            console.log("Socket Error:", error);
+            this.logger.info("Socket Error:", error);
         }
         return this.sock;
     }
@@ -321,7 +344,7 @@ export default class Whatsapp {
      * Handle Connection Update
      *
      */
-    private async connectionUpdate(update: ConnectionState): Promise<void> {
+    private connectionUpdate(update: ConnectionState) {
         const { 
             connection, 
             lastDisconnect, 
@@ -335,7 +358,9 @@ export default class Whatsapp {
         if (this.isStopedByUser) {
             this.logger.info(`Device ${this.info.id} Stoped by user (Safe Session)`);
             this.info.status = "stoped";
-            this.emitCallback(this.callableFunctions.onStopedSession)
+            this.emit('sock.stopped', {
+                reason: "stoped_by_user",
+            })
         }
         // Reconnect jika connection close (bukan dari user)
         else if (connection === "close") {
@@ -344,14 +369,16 @@ export default class Whatsapp {
                 const err = (lastDisconnect.error as Boom).output;
                 // Connection Gone (hilang/rusak)
                 if (err.statusCode === 410 || err?.payload.message === "Stream Errored") {
-                    console.log("Stream Errored", err.payload);
+                    this.logger.info("Stream Errored", err.payload);
                     try {
-                        await this.stopSock();
+                        this.stopSock();
                     } catch (error) {
-                        console.log("Stoped sock", error);
+                        this.logger.info("Stoped sock", error);
                     }
                     setTimeout(() => {
-                        this.startSock(true);
+                        if (!this.isStopedByUser) {
+                            this.startSock();
+                        }
                     }, 10_000);
                     return;
                 }
@@ -372,7 +399,7 @@ export default class Whatsapp {
                 // Masalah lainya
                 else {
                     const msg = lastDisconnect.error?.message || 'No Error';
-                    this.logger.error(msg + ' SOCKET CLOSED +++++++++++++++++++++++++++++')
+                    this.logger.error(lastDisconnect.error!, msg + ' SOCKET CLOSED +++++++++++++++++++++++++++++')
                     this.startSock();
                 }
             } else {
@@ -408,15 +435,13 @@ export default class Whatsapp {
             }
 
             if (connection === 'connecting') {
-                this.socketConnecting()
+                this.status = connection
+                this.info.status = connection
+                this.emit('sock.connecting', {
+
+                })
             }
-            event.emit("device.connection.update", this.info.id, {
-                status: this.info.status,
-                isAuth: this.info.isAuth,
-                info: this.info.status === "connected" ? this.info : null,
-            });
         }
-        // log("connection update: END");
     }
 
 
@@ -424,7 +449,7 @@ export default class Whatsapp {
     // Event Handler
     private socketConnected() {
         this.logger.info("Connection Open");
-        this.attemptQRcode = 0;
+        this._attemptQRcode = 0;
         this.setStatusDeviceActive();
         this.info.qrCode = null;
         this.info.isAuth = true;
@@ -437,57 +462,44 @@ export default class Whatsapp {
         if (this.info.jid !== null) {
             this.info.phoneNumber = jidToNumberPhone(this.info.jid);
         }
-
-        event.emit('connection.connected', this.info)
-
-        const infoSocket = this.getInfoSocket()
-
-        this.emitCallback(this.callableFunctions.onConnected, infoSocket)
+        this.emit('sock.connected', this.info) 
     }
 
-    private socketScanQR(codeQR: string) {
-        log("QR Code Update");
-        if (this.attemptQRcode > 5) {
-            console.log("Stoped Device because 5x not scanning QRcode (not used)");
-            this.stopSock();
+    private async socketScanQR(codeQR: string) {
+        this.logger.info("QR Code Update");
+        if (this._attemptQRcode > this.options.maxQrScanAttempts) {
+            this.logger.info("Stoped Device because 5x not scanning QRcode (not used)");
+            await this.stopSock();
+            this.emit('qr.stoped', {
+                state: 'expired',
+                reason: 'not_scanning',
+            })
             return;
         } else {
-            this.attemptQRcode++;
+            this._attemptQRcode++;
         }
         this.resetStatusClient();
         this.info.isAuth = false;
         this.info.qrCode = codeQR;
         this.info.status = "scan QR";
-        const data = {
+        this.emit('qr.update', {
+            status: 'onscan',
             qrCode: codeQR,
-        }
-        event.emit("device.qrcode.update", this.info.id, data);
-        this.emitCallback(this.callableFunctions.onScanQR, data)
-    }
-
-    private socketConnecting() {
-        const reasonInfo = {
-            reason: 'soket rusak'
-        }
-
-        event.emit('connection.connecting', reasonInfo)
+            qrImage: await makeQrImage(codeQR),
+            attempt: this._attemptQRcode,
+            remain: 0,
+        })
     }
 
     private socketLogout() {
-        log("Client Is Logout");
+        console.log("Client Is Logout");
         this.info.isAuth = false;
         this.info.status = "disconnected";
         this.setStatusDeviceDeactive();
         this.removeSessionPath();
-        const reasonInfo = {
+        this.emit('sock.disconnected', {
             reason: 'Logout',
-        }
-        event.emit('connection.disconnected', reasonInfo)
-        this.emitCallback(this.callableFunctions.onDisconnected, reasonInfo)
-    }
-
-    private presenceUpdated(presence: PresenceUpdate) {
-        event.emit('presence.update', presence)
+        })
     }
     // END: Event Handler
 
@@ -497,9 +509,15 @@ export default class Whatsapp {
      */
     async stopSock() {
         this.isStopedByUser = true; // Set StopByUser true agar tidak di Reconnect oleh connectionUpdate()
-        await this.sock.ws.terminate();
-        // await this.sock.ws.close();
         this.setStatusDeviceDeactive();
+        await this.sock.ws.close();
+    }
+
+
+    async login():Promise<WASocket> {
+        this.info.status = 'connecting';
+        this.isStopedByUser = false;
+        return await this.startSock()
     }
 
     async logout() {
@@ -511,7 +529,7 @@ export default class Whatsapp {
      */
     private removeSessionPath() {
         if (fs.existsSync(this.info.authPath)) {
-            fs.rmSync(this.info.authPath, { recursive: true, force: true });
+            fs.rmSync(this.info.authPath, { recursive: true });
         }
     }
 
@@ -531,71 +549,43 @@ export default class Whatsapp {
         this.info.phoneNumber = null;
     }
 
-    // emiter callable function
-    private emitCallback(callback: Function, ...data: any) {
-        return new Promise((resolve, reject) => {
-            try {
-                callback(...data)
-                resolve(true)
-            } catch (error) {
-                reject(error)
-            }
-        })
-    }
-
-    // Register Callable Event Function
-    onConnected(callback: Function) {
-        this.callableFunctions.onConnected = callback
-    }
-    onConnecting(callback: Function) {
-        this.callableFunctions.onConnecting = callback
-    }
-    onDisconnected(callback: Function) {
-        this.callableFunctions.onDisconnected = callback
-    }
-    onIncomingMessage(callback: Function) {
-        this.callableFunctions.onIncomingMessage = callback
-    }
-    onClickButtonMessage(callback: Function) {
-        this.callableFunctions.onClickButtonMessage = callback
-    }
-    onReactionMessage(callback: Function) {
-        this.callableFunctions.onReactionMessage = callback
-    }
-    onStopedSession(callback: Function) {
-        this.callableFunctions.onStopedSession = callback
-    }
-    // END: Register Callable Event Function
-
-    // dummy
-    private getInfoSocket() {
-        const infoSocket: object = {
-            name: 'david',
-            phone: '629361836372',
-        }
-        return infoSocket
-    }
-
+    /**
+     * 
+     * @param jid jid or phone number
+     * @returns 
+     */
     sendMessageWithTyping = async (
-        jid: string,
+        jidOrPhone: string,
         msg: AnyMessageContent,
         replayMsg?: proto.IWebMessageInfo,
         msTimeTyping?: number
     ) => {
-        await this.sock.presenceSubscribe(jid);
-        await delay(100);
-
-        await this.sock.sendPresenceUpdate("composing", jid);
-        await delay(msTimeTyping ?? 250); //ms
-
-        await this.sock.sendPresenceUpdate("paused", jid);
-        const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
         try {
-            console.log(quotedMsg);
-            return await this.sock.sendMessage(jid, msg, quotedMsg);
+            let jidRegistered: string | false = jidOrPhone 
+            if (!jidOrPhone.endsWith('@g.us')) {
+                jidRegistered = await this.isRegistWA(jidOrPhone)
+                if (jidRegistered === false) {
+                    return {
+                        status: false,
+                        error: true,
+                        message: "phone number is not registered",
+                        response: null,
+                        err: 'phone.not_registered'
+                    }
+                }
+            }
+        
+            if (msTimeTyping) {
+                await this.sock.presenceSubscribe(jidRegistered);
+                await this.sock.sendPresenceUpdate("composing", jidRegistered);
+                await delay(msTimeTyping); // ms
+                await this.sock.sendPresenceUpdate("paused", jidRegistered);
+            }
+
+            const quotedMsg = replayMsg ? { quoted: replayMsg } : replayMsg;
+            return await this.sock.sendMessage(jidRegistered, msg, quotedMsg);
         } catch (error) {
             const err = (error as Boom)?.output;
-            console.error("Send message", error, err?.payload ?? err);
             return {
                 status: false,
                 error: true,
@@ -608,11 +598,13 @@ export default class Whatsapp {
 
     /**
      * Checking Phone Number is Registration on Whatsapp
+     * @return JID string or false
+     *  
      */
-    async isRegistWA(numberPhone: string): Promise<boolean> {
-        const phone = convertToJID(numberPhone);
-        let res = await this.sock.onWhatsApp(phone);
-        return res[0]?.exists ?? false;
+    async isRegistWA(numberPhone: string): Promise<string|false> {
+        const jid = convertToJID(numberPhone);
+        let res = await this.sock.onWhatsApp(jid);
+        return res[0]?.exists ? jid : false;
     }
 
     async statusContact(jid: string) {
@@ -623,18 +615,17 @@ export default class Whatsapp {
     async fetchProfilePicture(
         jid: string,
         highResolution = false
-    ): Promise<string|undefined> {
-        if (highResolution) {
-            // for high res picture
-            return await this.sock.profilePictureUrl(jid, "image");
-        } else {
-            // for low res picture
-            return await this.sock.profilePictureUrl(jid);
-        }
+    ): Promise<string|null> {
+        // image for high res picture
+        // preview for low res picture
+        return await this.sock.profilePictureUrl(
+            jid, 
+            highResolution ? "image" : "preview"
+        ).catch(() => null) || null
     }
 
-    createMessage() {
-        return new Message(this)
+    createMessage(msTimeTyping?: number) {
+        return new Message(this, msTimeTyping)
     }
 
     /**
@@ -677,7 +668,6 @@ export default class Whatsapp {
     async getProfilePicture(highResolution = false): Promise<string|null> {
         if (this.info.jid) {
             this.info.ppURL = await this.fetchProfilePicture(this.info.jid, highResolution) || null;
-            event.emit('info.profile.photo', this.info.id, this.info.ppURL)
             return this.info.ppURL;
         }
         return null;
@@ -771,6 +761,97 @@ export default class Whatsapp {
         await writeFile(path, buffer)
         return path
     }
+
+    // add event listener
+    on<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.on(event, listener)
+    }
+
+    off<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.off(event, listener)
+    }
+
+    removeAllListeners<T extends keyof EzWaEventMap>(event: T): void {
+        this.event.removeAllListeners(event)
+    }
+
+    emit<T extends keyof EzWaEventMap>(event: T, arg: EzWaEventMap[T]): boolean {
+        return this.event.emit(event, arg)
+    }
+
+    once<T extends keyof EzWaEventMap>(event: T, listener: (arg: EzWaEventMap[T]) => void): void {
+        this.event.once(event, listener)
+    }
+
+    async waitSockConnected() {
+        return new Promise((resolve) => {
+            if (this.status === 'connected') {
+                resolve(this.info)
+            } else {
+                this.once("sock.connected", (data) => {
+                    resolve(data)
+                })
+            }
+        })
+    }
+
+    
+	async register(phone: string, methodVerifyOtp: 'sms'|'voice' = 'sms'): Promise<void|never> {
+        const phoneNumber = parsePhoneNumber(phone)
+		if(!phoneNumber?.isValid()) {
+			throw new Error('Invalid phone number: ' + phone)
+		}
+        const mcc = PHONENUMBER_MCC[phoneNumber.countryCallingCode as TCodeMCC]
+		if(!mcc) {
+			throw new Error(`Could not find MCC for phone number: ${phone}\nPlease specify the MCC manually.`)
+		}
+
+        await this.startSock();
+        const { registration } = this.sock.authState.creds;
+
+        registration.phoneNumber = phoneNumber.format('E.164')
+		registration.phoneNumberCountryCode = phoneNumber.countryCallingCode
+		registration.phoneNumberNationalNumber = phoneNumber.nationalNumber
+        registration.method = methodVerifyOtp
+        registration.phoneNumberMobileCountryCode = mcc.toString()
+
+        try {
+            await this.sock.requestRegistrationCode(registration)
+        } catch(error) {
+            console.error('Failed to request registration code. Please try again.\n', error)
+        }
+	}
+
+    async requestPairingCode() {
+        if (this.pairing.mode !== 'code') return null;
+        return await this.sock.requestPairingCode(this.pairing.phone)
+    }
+
+    
+    setPairingMode(mode: "qr", phone: undefined): void;
+    setPairingMode(mode: "code" | "mobile", phone: string): void;
+    setPairingMode(mode: any, phone: any) {
+        phone = phone.toString().trim()
+        if (phone.startsWith('+')) phone = phone.slice(1)
+        this.pairing.mode = mode
+        this.pairing.phone = phone
+    }
+
+
+    async verifyCodeOTP(code: string|number) {
+        try {
+            const response = await this.sock!.register(code.toString().trim().toLowerCase())
+            console.log('Successfully registered your phone number.', response)
+            return true
+        } catch(error) {
+            console.error('Failed to register your phone number. Please try again.\n', error)
+            return false
+        }
+    }
+
+    async resendCodeOTP() {
+		await this.sock!.requestRegistrationCode(this.sock!.authState.creds.registration)
+	}
 }
 
 enum GroupSettingOption {

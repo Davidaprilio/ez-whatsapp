@@ -1,9 +1,8 @@
-import { proto } from "@adiwajshing/baileys";
-import { convertToJID } from "../helper";
+import { convertToJID } from "../src/helper";
 // import { OptionSection } from "./message/list";
-import Whatsapp, { Client } from "../Whatsapp";
+import Whatsapp, { Client } from "../src/Whatsapp";
 
-const wa: Whatsapp = new Whatsapp('david-14A', null, {
+const wa: Whatsapp = new Whatsapp('david-14A', {
     browser: Client.Opera
 });
 
@@ -12,7 +11,7 @@ const wa: Whatsapp = new Whatsapp('david-14A', null, {
     await wa.startSock()
     console.log('Socket Started');
 
-    wa.onConnected((info: any) => {
+    wa.on('sock.connected', (info) => {
         console.log('WES KONEK =======================', info);
 
         setTimeout(async () => {
@@ -21,26 +20,56 @@ const wa: Whatsapp = new Whatsapp('david-14A', null, {
 			const isRegister = await wa.isRegistWA(jid);
 			console.log('isRegister', isRegister);
 			if (isRegister) {
-                // const msg = wa.createMessage()
+                const msg = wa.createMessage(typeMsg? = basic)
                 // Make Text message
-				// msg.text('WA Tersambung')
-
+				msg.header('type', {
+                    url: 'as'
+                })
+				msg.title('WA Tersambung')
+				msg.body([
+                    'hello',
+                    '1. ',
+                    '2. ',
+                ])
+				msg.footer('WA Tersambung')
+				msg.send(jid)
+                msg.reply()
+                
                 // Make button message
-				// msg.button('Text message', 'Footer Message')
-				// 	.image('https://www.w3schools.com/tags/smiley.gif') // belum bisa
-				// 	.add('Button 1')
-				// 	.add('Button 2')
-				// 	.add('Button 3');
+                const msgBtn = wa.createButtonMessage()
+				msgBtn
+                    .header()
+                    .title()
+                    .body()
+                    .footer()
+                    .addButtonReplay('Footer Message', 'id')
+                    .addButtonUrl('http', 'id')
+                    .addButtonMerchant('http', 'id')
+                    .addButtonCopy('123456', 'id')
+                    .addButton('type', {
+                        ...options
+                    })
+                    .getPayload()
+                    .send(jid, {replyMsgId: ''})
+                    .reply(msg)
+					// .image('https://www.w3schools.com/tags/smiley.gif') // belum bisa
+					// .add('Button 1')
+					// .add('Button 2')
+					// .add('Button 3');
 
                 // Make List Message
-                // const listMsg = msg.list('Pesan List Option', 'Silahkan pilih opsi dibawah')
-                // listMsg.section('Section 1', (section: OptionSection) => {
-                //     section.option('option1', 'Option 1')
-                //     section.option('option2', 'Option 2', 'Option description')
-                // })
-                // listMsg.addSection('Section 2')
-                //     .addOption('option1', 'Option 1')
-                //     .addOption('option2', 'Option 2', 'Option description')
+                const listMsg = wa.createListMessage()
+                    .header()
+                    .title()
+                    .body()
+                    .footer()
+                    .addSection('Section 1', (section: OptionSection) => {
+                        section.option('option1', 'Option 1')
+                        section.option('option2', 'Option 2', 'Option description')
+                    })
+                listMsg.addSection('Section 2')
+                    .addOption('option1', 'Option 1')
+                    .addOption('option2', 'Option 2', 'Option description')
 
                 // Make Template Message
                 // msg.template('Pesan Template')
@@ -69,19 +98,29 @@ const wa: Whatsapp = new Whatsapp('david-14A', null, {
 			}
         }, 5_000);
     })
-    
-    wa.onDisconnected((reasonInfo: object) => {
+
+    wa.on('sock.disconnected', (reasonInfo: object) => {
         console.log('Koneksi Terputus', reasonInfo);
     })
 
-    wa.onConnecting(() => {
-        console.log('Menyambungkan Ulang');
-    })
-    wa.onStopedSession(() => {
+    wa.on('sock.connecting', () => {
         console.log('Menyambungkan Ulang');
     })
 
-    wa.onIncomingMessage((message: proto.IWebMessageInfo, isFromGroup: boolean, isFromMe: boolean, jid: string|null, messageID: string|null) => {
+    wa.on('qr.stoped', (data) => {
+        if (data.state == 'expired') {
+            console.log('upaya menyambungkan QR habis');
+        } else {
+            console.log('QR code telah berhenti');
+        }
+    })
+
+    wa.on('msg.incoming', (data) => {
+        const message = data.message;
+        const isFromMe = message.key.fromMe;
+        const isFromGroup = message.key.remoteJid?.endsWith('@g.us') || false;
+        const { jid, messageID } = data.messageData
+
         console.log(
             {
                 message, isFromMe, isFromGroup, jid, messageID
@@ -109,6 +148,10 @@ const wa: Whatsapp = new Whatsapp('david-14A', null, {
                 }
             }
         }
+    })
+
+    wa.on('qr.update', (data) => {
+        console.log('QR Update', data);
     })
 
 })()

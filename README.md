@@ -4,11 +4,13 @@ Ini adalah wrapper untuk WA Baileys agar penggunaan api dari Baileys semakin mud
 Contoh pembuatan socket client
 ```ts
 import Whatsapp, { Client } from "../Whatsapp";
-const wa: Whatsapp = new Whatsapp('david-14A', null, {
-	browser: Client.Opera
+// new Whatsapp(sessionID, options);
+const wa: Whatsapp = new Whatsapp('david-14A', {
+	browser: Client.Opera,
+	showQRinTerminal: true
 });
 
-wa.startSock()
+wa.login()
 wa.onConnected((info: any) => {
 	console.log('Connected', info);
 	setTimeout(()  =>  {

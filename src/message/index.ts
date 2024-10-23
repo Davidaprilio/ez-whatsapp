@@ -1,4 +1,4 @@
-import { AnyRegularMessageContent, proto } from "@adiwajshing/baileys";
+import { AnyMessageContent, AnyRegularMessageContent, proto } from "@whiskeysockets/baileys";
 import Whatsapp from "../Whatsapp";
 import MessageButton from "./button";
 import MessageContact from "./contact";
@@ -12,13 +12,21 @@ export type NullableString = string | null
 export default class Message {
 	private client: Whatsapp;
 	private msTimeTyping: number;
-	private toPhones: string[];
+	private toPhones: string[] = [];
 	private skeletonPayloads: any[] = [];
 	private payloads: AnyRegularMessageContent[] = []
 
-	constructor(client: Whatsapp, msTimeTyping: number = 10) {
+	constructor(client: Whatsapp, msTimeTyping: number = 0) {
 		this.client = client
 		this.msTimeTyping = msTimeTyping
+	}
+
+	resetPayloads() {
+		this.payloads = []
+	}
+
+	resetPhones() {
+		this.toPhones = []
 	}
 
 	text(text: string): void {
@@ -122,7 +130,7 @@ export default class Message {
 	 *  
 	 * @param payloadMessageContent 
 	 */
-	rawPayload(payloadMessageContent: object): void {
+	rawPayload(payloadMessageContent: AnyMessageContent): void {
 		this.makePayloadObject(
 			payloadMessageContent
 		)
@@ -157,6 +165,13 @@ export default class Message {
 		this.buildPayload()
 		console.log(this.payloads);
 	}
+	
+	getPayloads(index?: number) {
+		this.buildPayload()
+		return index === undefined
+			? this.payloads
+			: this.payloads[index]
+	}
 
 	to(jid: string) {
 		this.toPhones.push(jid)
@@ -164,7 +179,7 @@ export default class Message {
 
 	reply(message: proto.IWebMessageInfo) {
 		if (message.key.remoteJid === null || message.key.remoteJid === undefined) {
-			console.log(message.key)
+			this.client.logger.info(message.key)
 			throw new Error("Reply Message but JID Not Found");
 		}
 		this.buildPayload()
@@ -172,35 +187,46 @@ export default class Message {
 		this.sendMessageExec(message.key.remoteJid, message)
 	}
 
-	send(jid?: string) {
+	/**
+	 * Execute Sending Message
+	 * 
+	 * @param jidOrNumberPhone jid wa or phone number with country code
+	 */
+	async send(jidOrNumberPhone?: string) {
 		this.buildPayload()
 		this.skeletonPayloads = []
-		if (jid) {
-			this.sendMessageExec(jid)
+		if (jidOrNumberPhone) {
+			return await this.sendMessageExec(jidOrNumberPhone)
 		} else {
-			this.toPhones.map((jid) => {
-				this.sendMessageExec(jid)
-			})
+			const res: any = {}
+			for (const phone of this.toPhones) {
+				res[phone] = await this.sendMessageExec(phone)
+			}
+			return res
 		}
 	}
 
 	/**
 	 * Execute Sending Message
+	 * the more payload and phone, the longer the sending process
 	 * @param jid jid wa or phone
 	 * @returns response from wa
 	 */
-	private sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
-		console.log('sendTo:', jid);
+	private async sendMessageExec(jid: string, replyMessage?: proto.IWebMessageInfo) {
+		this.client.logger.info('sendTo:', jid);
+		const res: any[] = [];
 
-		const res = this.payloads.map(async (payload) => {
-			const res = await this.client.sendMessageWithTyping(
+		for (const payload of this.payloads) {
+			const resClient = await this.client.sendMessageWithTyping(
 				jid, 
 				payload, 
 				replyMessage, 
-				this.msTimeTyping)
-			console.log('RES WA', res);
-			return res
-		})
+				this.msTimeTyping	
+			)
+			this.client.logger.info('RES WA', resClient);
+
+			res.push(resClient)
+		}
 		return res
 	}
 }

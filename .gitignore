@@ -1,5 +1,7 @@
 node_modules
 /lib
+/coverage
 .session/
+.auth-states/
 storage
 logs
